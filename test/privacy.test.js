@@ -44,6 +44,36 @@ test('config pattern with mode=name-only honors the chosen mode', () => {
   assert.equal(r.visibility, 'name-only');
 });
 
+test('config pattern with global projectName fakes the same name for every match', () => {
+  const cfg = { privacy: { patterns: ['client-*'], mode: 'name-only', projectName: 'redacted', autoDetectGithubPrivate: false } };
+  const r1 = resolveVisibility('/home/foo/work/client-acme', cfg);
+  const r2 = resolveVisibility('/home/foo/work/client-zeta', cfg);
+  assert.equal(r1.projectName, 'redacted');
+  assert.equal(r2.projectName, 'redacted', 'same global alias applies to every matched project');
+});
+
+test('global projectName is never applied to a public resolution', () => {
+  const cfg = { privacy: { projectName: 'redacted', autoDetectGithubPrivate: false } };
+  const r = resolveVisibility('/home/foo/projects/not-flagged', cfg);
+  assert.equal(r.visibility, 'public');
+  assert.equal(r.projectName, null, 'no fake name leaks onto an unflagged project');
+});
+
+test('per-project projectName wins over the global fallback', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rpc-priv-'));
+  try {
+    writeFileSync(join(dir, '.claude-rpc.json'), JSON.stringify({
+      visibility: 'name-only',
+      projectName: 'client-acme',
+    }));
+    const cfg = { privacy: { projectName: 'redacted', autoDetectGithubPrivate: false } };
+    const r = resolveVisibility(dir, cfg);
+    assert.equal(r.projectName, 'client-acme', 'per-project alias takes priority over the global one');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('per-project file wins over global config', () => {
   const dir = mkdtempSync(join(tmpdir(), 'rpc-priv-'));
   try {
