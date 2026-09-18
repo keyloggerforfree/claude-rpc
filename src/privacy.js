@@ -17,6 +17,14 @@
 //   hidden      cwd cleared entirely; daemon then short-circuits to
 //               clearActivity (same effect as hideWhenStale)
 //
+// Project name aliasing: a per-project `projectName` in .claude-rpc.json
+// always wins. Failing that, `config.privacy.projectName` in the global
+// config.json is used as a fallback fake name for ANY project that resolves
+// non-public (name-only / hidden, via any of the three layers above) — so
+// e.g. `privacy.patterns` + `privacy.mode: "name-only"` + `privacy.projectName`
+// together show one fake label for every matched project without needing a
+// .claude-rpc.json in each one. Never applied to a 'public' resolution.
+//
 // Aggregates (scanner) and the local TUI/web dashboards are NEVER affected
 // by these flags. Privacy is a one-way valve from local state → Discord.
 
@@ -237,17 +245,26 @@ function probeGithubPrivate(cwd) {
 // Returns: { visibility, projectName, reason }
 export function resolveVisibility(cwd, config = {}) {
   const proj = normalizeProjectConfig(readProjectConfig(cwd));
+  // config.privacy.projectName is a GLOBAL fake name — the fallback alias for
+  // any project that resolves non-public through one of the layers below
+  // (pattern match, gh-private, runtime list) but has no per-project
+  // `projectName` of its own. A per-project alias always wins. Never applied
+  // to a 'public' resolution — that's real-name-and-detail territory, and
+  // slapping a fake name on every project would just make the card useless.
+  const globalAlias = typeof config?.privacy?.projectName === 'string' ? config.privacy.projectName : null;
+  const aliasFor = (visibility) => proj?.projectName ?? (visibility === 'public' ? null : globalAlias);
+
   if (proj?.visibility) {
-    return { visibility: proj.visibility, projectName: proj.projectName, reason: '.claude-rpc.json' };
+    return { visibility: proj.visibility, projectName: aliasFor(proj.visibility), reason: '.claude-rpc.json' };
   }
   // Central GUI-managed map (incl. explicit 'public' as an opt-out of
   // auto-hide). Ranks above the legacy binary list and config/gh layers.
   const mapped = visibilityForCwd(cwd);
   if (mapped) {
-    return { visibility: mapped, projectName: proj?.projectName ?? null, reason: 'private-list (visibility)' };
+    return { visibility: mapped, projectName: aliasFor(mapped), reason: 'private-list (visibility)' };
   }
   if (isInPrivateList(cwd)) {
-    return { visibility: 'hidden', projectName: proj?.projectName ?? null, reason: 'private-list' };
+    return { visibility: 'hidden', projectName: aliasFor('hidden'), reason: 'private-list' };
   }
   const patterns = config?.privacy?.patterns || [];
   if (patterns.length && cwd) {
@@ -255,7 +272,7 @@ export function resolveVisibility(cwd, config = {}) {
     for (const p of patterns) {
       if (matchesPattern(leaf, p)) {
         const mode = config?.privacy?.mode || 'hidden';
-        return { visibility: mode, projectName: proj?.projectName ?? null, reason: `config pattern '${p}'` };
+        return { visibility: mode, projectName: aliasFor(mode), reason: `config pattern '${p}'` };
       }
     }
   }
@@ -263,10 +280,10 @@ export function resolveVisibility(cwd, config = {}) {
     const isPrivate = detectGithubPrivate(cwd);
     if (isPrivate === true) {
       const mode = config?.privacy?.githubPrivateMode || 'hidden';
-      return { visibility: mode, projectName: proj?.projectName ?? null, reason: 'github private repo' };
+      return { visibility: mode, projectName: aliasFor(mode), reason: 'github private repo' };
     }
   }
-  return { visibility: 'public', projectName: proj?.projectName ?? null, reason: 'default' };
+  return { visibility: 'public', projectName: aliasFor('public'), reason: 'default' };
 }
 
 // Name-level privacy check for surfaces that only have a project NAME, not a
