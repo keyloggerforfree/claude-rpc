@@ -264,6 +264,14 @@ Or globally, in `config.json`:
 { "privacy": { "patterns": ["client-*", "secret-stuff"], "mode": "hidden" } }
 ```
 
+`privacy.projectName` sets a fallback fake name for any project that pattern/gh/list matching resolves to non-public and that has no per-project `projectName` of its own — pair it with `mode: "name-only"` to show the same fake label on every matched project instead of the real folder name:
+
+```json
+{ "privacy": { "patterns": ["client-*"], "mode": "name-only", "projectName": "redacted" } }
+```
+
+A per-project `.claude-rpc.json` alias always takes priority over this global one, and it's never applied to projects that resolve `public`.
+
 If [`gh`](https://cli.github.com/) is installed and authenticated, GitHub-private repos auto-hide (`privacy.githubPrivateMode`, default `hidden` — opt out with `privacy.autoDetectGithubPrivate: false`). 5-minute cache, 1.5s timeout, silent skip when `gh` isn't there.
 
 Aggregates and local dashboards are never affected. Privacy is a one-way valve between local state and Discord.
