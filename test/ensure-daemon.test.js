@@ -14,10 +14,21 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-const { shouldSpawnDaemon, claimSingleInstance, isAlive } = await import('../src/ensure-daemon.js');
+const { shouldSpawnDaemon, claimSingleInstance, isAlive, ensureDaemonRunning } = await import('../src/ensure-daemon.js');
 
 const NOW = 1_000_000;
 const COOL = 15_000;
+
+test('ensureDaemonRunning: CLAUDE_RPC_NO_AUTOSTART blocks the spawn even with autostart on', () => {
+  const prev = process.env.CLAUDE_RPC_NO_AUTOSTART;
+  process.env.CLAUDE_RPC_NO_AUTOSTART = '1';
+  try {
+    assert.equal(ensureDaemonRunning({ autostart: true, cooldownMs: 0 }), null);
+  } finally {
+    if (prev === undefined) delete process.env.CLAUDE_RPC_NO_AUTOSTART;
+    else process.env.CLAUDE_RPC_NO_AUTOSTART = prev;
+  }
+});
 
 // ── shouldSpawnDaemon (hook self-heal decision) ────────────────────────
 test('shouldSpawnDaemon: down + autostart on + no recent attempt → spawn', () => {
