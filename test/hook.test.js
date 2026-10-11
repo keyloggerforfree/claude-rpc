@@ -53,6 +53,240 @@ test('SessionStart resets state', () => {
   assert.equal(s.messages, 0);
 });
 
+test('an interrupted tool (no PostToolUse) is cleared by the next prompt or Stop', () => {
+  resetStateFile();
+  processHookEvent('SessionStart', { cwd: '/tmp/proj' });
+  processHookEvent('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'sleep 999' } });
+  assert.equal(readState().currentTool, 'Bash');
+  processHookEvent('UserPromptSubmit', { cwd: '/tmp/proj' });
+  let s = readState();
+  assert.equal(s.currentTool, null);
+  assert.equal(s.toolStartedAt, null);
+  processHookEvent('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'sleep 999' } });
+  processHookEvent('Stop', {});
+  s = readState();
+  assert.equal(s.currentTool, null);
+  assert.equal(s.toolStartedAt, null);
+});
+
+// ── async tool hooks: arrival order ≠ dispatch order ────────────────────
+// `at` is the hook process's start time (dispatch order); call order below is
+// the order the async hooks happened to LAND in.
+test('async: a PreToolUse landing after its own PostToolUse does not resurrect the tool', () => {
+  resetStateFile();
+  const t = Date.now();
+  processHookEvent('SessionStart', { cwd: '/tmp/proj' }, t);
+  processHookEvent('PostToolUse', { tool_name: 'Read', tool_use_id: 'A', tool_input: {} }, t + 20);
+  processHookEvent('PreToolUse', { tool_name: 'Read', tool_use_id: 'A', tool_input: {} }, t + 10);
+  const s = readState();
+  assert.equal(s.toolsRunning, 0);
+  assert.deepEqual(s.toolsInFlight, {});
+  assert.equal(s.currentTool, null);
+});
+
+test('async: parallel starts landing out of order are both tracked', () => {
+  resetStateFile();
+  const t = Date.now();
+  processHookEvent('SessionStart', { cwd: '/tmp/proj' }, t);
+  // Bash (A) dispatched first but lands second — stale, yet still running.
+  processHookEvent('PreToolUse', { tool_name: 'Read', tool_use_id: 'B', tool_input: { file_path: '/tmp/proj/b.js' } }, t + 20);
+  processHookEvent('PreToolUse', { tool_name: 'Bash', tool_use_id: 'A', tool_input: { command: 'npm test' } }, t + 10);
+  assert.equal(readState().toolsRunning, 2);
+  processHookEvent('PostToolUse', { tool_name: 'Read', tool_use_id: 'B', tool_input: { file_path: '/tmp/proj/b.js' } }, t + 30);
+  const s = readState();
+  assert.equal(s.toolsRunning, 1);
+  assert.equal(s.currentTool, 'Bash', 'shows the tool that is still running');
+  assert.equal(s.toolStartedAt, t + 10);
+});
+
+test('async: a late PostToolUse after Stop does not un-idle the card', () => {
+  resetStateFile();
+  const t = Date.now();
+  processHookEvent('SessionStart', { cwd: '/tmp/proj' }, t);
+  processHookEvent('PreToolUse', { tool_name: 'Bash', tool_use_id: 'A', tool_input: { command: 'ls' } }, t + 10);
+  processHookEvent('Stop', {}, t + 30);
+  processHookEvent('PostToolUse', { tool_name: 'Bash', tool_use_id: 'A', tool_input: { command: 'ls' } }, t + 20);
+  const s = readState();
+  assert.equal(s.status, 'idle');
+  assert.equal(s.toolsRunning, 0);
+});
+
+test('async: PostToolBatch retires its ids so a late PreToolUse is ignored', () => {
+  resetStateFile();
+  const t = Date.now();
+  processHookEvent('SessionStart', { cwd: '/tmp/proj' }, t);
+  processHookEvent('PostToolBatch', { tool_calls: [{ tool_use_id: 'A' }] }, t + 20);
+  processHookEvent('PreToolUse', { tool_name: 'Bash', tool_use_id: 'A', tool_input: { command: 'rm x' } }, t + 10);
+  assert.equal(readState().toolsRunning, 0);
+});
+
+test('a sibling still running keeps a permission prompt pending', () => {
+  resetStateFile();
+  const t = Date.now();
+  processHookEvent('SessionStart', { cwd: '/tmp/proj' }, t);
+  processHookEvent('PreToolUse', { tool_name: 'Read', tool_use_id: 'A', tool_input: {} }, t + 10);
+  processHookEvent('PreToolUse', { tool_name: 'Bash', tool_use_id: 'B', tool_input: { command: 'rm x' } }, t + 11);
+  processHookEvent('Notification', { notification_type: 'permission_prompt' }, t + 20);
+  processHookEvent('PostToolUse', { tool_name: 'Read', tool_use_id: 'A', tool_input: {} }, t + 30);
+  const s = readState();
+  assert.equal(s.status, 'notification', 'the prompt may be for B, still unanswered');
+  assert.ok(s.permissionPendingAt);
+});
+
+test('parallel tools: the first PostToolUse keeps the turn in-flight while a sibling runs', () => {
+  resetStateFile();
+  processHookEvent('SessionStart', { cwd: '/tmp/proj' });
+  processHookEvent('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'npm test' } });
+  processHookEvent('PreToolUse', { tool_name: 'Read', tool_input: { file_path: '/tmp/proj/a.js' } });
+  processHookEvent('PostToolUse', { tool_name: 'Read', tool_input: { file_path: '/tmp/proj/a.js' } });
+  let s = readState();
+  assert.equal(s.toolsRunning, 1);
+  assert.ok(s.currentTool, 'still a tool running');
+  assert.ok(s.toolStartedAt);
+  processHookEvent('PostToolUse', { tool_name: 'Bash', tool_input: { command: 'npm test' } });
+  s = readState();
+  assert.equal(s.toolsRunning, 0);
+  assert.equal(s.currentTool, null);
+  assert.equal(s.toolStartedAt, null);
+});
+
+// ── notification kinds ──────────────────────────────────────────────────
+test('Notification idle_prompt ends the turn instead of flashing "Permission needed"', () => {
+  resetStateFile();
+  processHookEvent('SessionStart', { cwd: '/tmp/proj' });
+  processHookEvent('UserPromptSubmit', { cwd: '/tmp/proj' });
+  processHookEvent('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'sleep 999' } });
+  processHookEvent('Notification', { notification_type: 'idle_prompt', message: 'Claude is waiting for your input' });
+  const s = readState();
+  assert.equal(s.status, 'idle');
+  assert.equal(s.turnOpen, false);
+  assert.equal(s.currentTool, null);
+  assert.equal(s.toolsRunning, 0);
+});
+
+test('informational notifications (auth_success, agent_completed) leave the status alone', () => {
+  resetStateFile();
+  processHookEvent('SessionStart', { cwd: '/tmp/proj' });
+  processHookEvent('UserPromptSubmit', { cwd: '/tmp/proj' });
+  for (const kind of ['auth_success', 'agent_completed', 'quota_auto_resume_fired']) {
+    processHookEvent('Notification', { notification_type: kind });
+    assert.equal(readState().status, 'thinking', kind);
+  }
+});
+
+test('permission_prompt marks a pending prompt and keeps the tool it is for', () => {
+  resetStateFile();
+  processHookEvent('SessionStart', { cwd: '/tmp/proj' });
+  processHookEvent('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'rm -rf build' } });
+  processHookEvent('Notification', { notification_type: 'permission_prompt', message: 'Claude needs your permission to use Bash' });
+  const s = readState();
+  assert.equal(s.status, 'notification');
+  assert.ok(s.permissionPendingAt);
+  assert.equal(s.currentTool, 'Bash');
+});
+
+test('a Notification without notification_type (older Claude Code) keeps the old flash', () => {
+  resetStateFile();
+  processHookEvent('SessionStart', { cwd: '/tmp/proj' });
+  processHookEvent('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } });
+  processHookEvent('Notification', { message: 'Claude needs your permission to use Bash' });
+  const s = readState();
+  assert.equal(s.status, 'notification');
+  assert.equal(s.permissionPendingAt, null);
+  assert.equal(s.currentTool, null);
+});
+
+test('PostToolUse after a permission prompt: approved, the turn carries on', () => {
+  resetStateFile();
+  processHookEvent('SessionStart', { cwd: '/tmp/proj' });
+  processHookEvent('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'npm test' } });
+  processHookEvent('Notification', { notification_type: 'permission_prompt' });
+  processHookEvent('PostToolUse', { tool_name: 'Bash', tool_input: { command: 'npm test' } });
+  const s = readState();
+  assert.equal(s.status, 'working');
+  assert.equal(s.permissionPendingAt, null);
+});
+
+// ── events added for the gaps the original nine left ────────────────────
+test('PostToolUseFailure resolves the tool (failing `npm test`) without ship detection', () => {
+  resetStateFile();
+  processHookEvent('SessionStart', { cwd: '/tmp/proj' });
+  processHookEvent('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'git push' } });
+  processHookEvent('PostToolUseFailure', { tool_name: 'Bash', tool_input: { command: 'git push' }, error: 'Exit code 1' });
+  const s = readState();
+  assert.equal(s.toolsRunning, 0);
+  assert.equal(s.currentTool, null);
+  assert.equal(s.toolStartedAt, null);
+  assert.ok(!s.justShipped, 'a failed push is not a ship');
+});
+
+test('PostToolBatch clears everything in flight — including a denied tool that never resolved', () => {
+  resetStateFile();
+  processHookEvent('SessionStart', { cwd: '/tmp/proj' });
+  processHookEvent('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'rm -rf /' } });
+  processHookEvent('Notification', { notification_type: 'permission_prompt' });
+  // user denies → no PostToolUse / PostToolUseFailure, only the batch resolves
+  processHookEvent('PostToolBatch', { tool_calls: [] });
+  const s = readState();
+  assert.equal(s.toolsRunning, 0);
+  assert.equal(s.currentTool, null);
+  assert.equal(s.permissionPendingAt, null);
+  assert.equal(s.status, 'working');
+  assert.equal(s.turnOpen, true);
+});
+
+test('StopFailure (API error) ends the turn like Stop', () => {
+  resetStateFile();
+  processHookEvent('SessionStart', { cwd: '/tmp/proj' });
+  processHookEvent('UserPromptSubmit', { cwd: '/tmp/proj' });
+  processHookEvent('StopFailure', { error: 'rate_limit' });
+  const s = readState();
+  assert.equal(s.status, 'idle');
+  assert.equal(s.turnOpen, false);
+});
+
+test('manual /compact settles on idle (PostCompact first or SessionStart first)', () => {
+  for (const order of [['PostCompact', 'SessionStart'], ['SessionStart', 'PostCompact']]) {
+    resetStateFile();
+    processHookEvent('SessionStart', { cwd: '/tmp/proj' });
+    processHookEvent('PreCompact', { trigger: 'manual' });
+    for (const ev of order) {
+      processHookEvent(ev, ev === 'PostCompact' ? { trigger: 'manual' } : { source: 'compact' });
+    }
+    const s = readState();
+    assert.equal(s.status, 'idle', order.join(' → '));
+    assert.equal(s.turnOpen, false);
+  }
+});
+
+test('auto-compaction resumes the turn as working', () => {
+  resetStateFile();
+  processHookEvent('SessionStart', { cwd: '/tmp/proj' });
+  processHookEvent('UserPromptSubmit', { cwd: '/tmp/proj' });
+  processHookEvent('PreCompact', { trigger: 'auto' });
+  processHookEvent('PostCompact', { trigger: 'auto' });
+  processHookEvent('SessionStart', { source: 'compact' });
+  const s = readState();
+  assert.equal(s.status, 'working');
+  assert.equal(s.turnOpen, true);
+});
+
+test('an event this version does not model is liveness only, not a Stop', () => {
+  resetStateFile();
+  processHookEvent('SessionStart', { cwd: '/tmp/proj' });
+  processHookEvent('UserPromptSubmit', { cwd: '/tmp/proj' });
+  processHookEvent('SomeFutureEvent', {});
+  assert.equal(readState().status, 'thinking');
+});
+
+test('the transcript path from the payload is recorded for the daemon', () => {
+  resetStateFile();
+  processHookEvent('SessionStart', { cwd: '/tmp/proj', transcript_path: '/tmp/t/a.jsonl' });
+  assert.equal(readState().transcriptPath, '/tmp/t/a.jsonl');
+  processHookEvent('UserPromptSubmit', { cwd: '/tmp/proj', transcript_path: '/tmp/t/b.jsonl' });
+  assert.equal(readState().transcriptPath, '/tmp/t/b.jsonl');
+});
+
 test('UserPromptSubmit increments messages, sets thinking, clears closed', () => {
   resetStateFile();
   processHookEvent('SessionStart', { cwd: '/tmp/proj' });
@@ -326,8 +560,11 @@ test('per-session: concurrent sessions write separate files; selection sticks th
     // Showing B; A pings again → STICK to B (no thrash while B is active).
     processHookEvent('PreToolUse', { session_id: A, cwd: '/projA', tool_name: 'Edit', tool_input: { file_path: '/projA/y.js' } });
     assert.equal(pickActiveSession(mine(), B, Date.now(), 60_000).sessionId, B, 'sticks to B');
-    // B goes idle → switch to where the user is now active (A).
-    const aged = mine().map((s) => s.sessionId === B ? { ...s, lastActivity: Date.now() - 90_000 } : s);
+    // B goes idle → switch to where the user is now active (A). B's turn must
+    // actually have ended (Stop): an open turn or a tool still in flight keeps
+    // a session live however quiet it is.
+    const aged = mine().map((s) => s.sessionId === B
+      ? { ...s, status: 'idle', turnOpen: false, lastActivity: Date.now() - 90_000, currentTool: null, toolStartedAt: null, toolsRunning: 0 } : s);
     assert.equal(pickActiveSession(aged, B, Date.now(), 60_000).sessionId, A, 'switches once B idles');
     // B ends → excluded from the live count and selection.
     processHookEvent('SessionEnd', { session_id: B, cwd: '/projB' });

@@ -48,12 +48,71 @@ export function processHookEvent(event, input = {}, now = Date.now()) {
   // turn's (synchronous) Stop. `now` is the hook process's START time, i.e.
   // Claude Code's dispatch order, so an event older than the last one applied
   // is `stale`: it may still add to counters but must not overwrite status.
+  // Every payload also carries transcript_path; keep it current so the daemon
+  // can read signals hooks never send (see state.transcriptPath).
+  const tpath = input.transcript_path || null;
   const update = (fn) => updateState((s) => {
     const stale = now < (s.lastEventAt || 0);
     if (!stale) s.lastEventAt = now;
-    return fn(s, stale);
+    const next = fn(s, stale) ?? s;
+    if (tpath) next.transcriptPath = tpath;
+    return next;
   }, sid);
-  const reset = (seed) => resetState({ lastEventAt: now, ...seed }, sid);
+  const reset = (seed) => resetState({ lastEventAt: now, ...(tpath ? { transcriptPath: tpath } : {}), ...seed }, sid);
+
+  // ── Running tools ─────────────────────────────────────────────────────────
+  // Keyed by tool_use_id rather than counted: async Pre/PostToolUse arrive in
+  // any order, so a count drifts (a PreToolUse landing after its own
+  // PostToolUse left it stuck at 1). An id can't drift — a finish removes
+  // exactly its own tool, and a start whose finish already landed is ignored.
+  // Payloads without an id (older Claude Code) fall back to start/finish
+  // pairing, skipping stale starts.
+  const toolId = input.tool_use_id || null;
+  const DONE_MAX = 64;
+  function trackToolStart(s, toolName, stale) {
+    if (toolId && (s.toolsDone || []).includes(toolId)) return;
+    if (!toolId && stale) return;
+    // Anonymous keys need a unique suffix: parallel starts can share a millisecond.
+    const key = toolId || `anon-${now}-${Math.random().toString(36).slice(2, 10)}`;
+    s.toolsInFlight = { ...(s.toolsInFlight || {}), [key]: { tool: toolName, startedAt: now } };
+    s.toolsRunning = Object.keys(s.toolsInFlight).length;
+  }
+  function trackToolFinish(s, toolName) {
+    const inflight = { ...(s.toolsInFlight || {}) };
+    if (toolId) {
+      delete inflight[toolId];
+      s.toolsDone = [...(s.toolsDone || []).filter((id) => id !== toolId), toolId].slice(-DONE_MAX);
+    } else {
+      // No id: finish the oldest running tool of the same name, so a quick
+      // Read finishing can't retire a long Bash; any anonymous one otherwise.
+      const anon = Object.keys(inflight).filter((k) => k.startsWith('anon-'))
+        .sort((a, b) => inflight[a].startedAt - inflight[b].startedAt);
+      const key = anon.find((k) => inflight[k].tool === toolName) || anon[0];
+      if (key) delete inflight[key];
+    }
+    s.toolsInFlight = inflight;
+    s.toolsRunning = Object.keys(inflight).length;
+  }
+  // currentTool / toolStartedAt follow the most recently started tool still
+  // running — or clear once none is. Only for non-stale events.
+  function showRunningTool(s) {
+    const running = Object.values(s.toolsInFlight || {});
+    if (!running.length) {
+      s.currentTool = null;
+      s.toolStartedAt = null;
+      return;
+    }
+    const latest = running.reduce((a, b) => (b.startedAt > a.startedAt ? b : a));
+    s.currentTool = latest.tool;
+    s.toolStartedAt = latest.startedAt;
+  }
+
+  // The turn is over (Stop, StopFailure, idle_prompt): nothing is running.
+  // toolsDone is kept so late async PreToolUse hooks stay ignored.
+  const TURN_ENDED = {
+    status: 'idle', currentTool: null, currentFile: null, toolStartedAt: null,
+    toolsInFlight: {}, toolsRunning: 0, turnOpen: false, permissionPendingAt: null,
+  };
 
   function setActivity(patch) {
     update((s) => {
@@ -72,13 +131,17 @@ export function processHookEvent(event, input = {}, now = Date.now()) {
       // Post-compaction continuation, NOT a new session: Claude Code re-fires
       // SessionStart with source:'compact' after every compaction. Resetting
       // here wiped the elapsed timer and message/tool/file counters mid-turn.
-      // Just clear the compacting marker and carry on; the turn that triggered
-      // the compaction resumes immediately, hence 'working'.
+      // Just clear the compacting marker and carry on. An auto-compaction
+      // happens mid-turn, which resumes immediately ('working'); a manual
+      // /compact runs between turns, so Claude is back to waiting ('idle').
+      // PostCompact may arrive first and already have settled the status.
       if (input.source === 'compact') {
         update((s) => {
+          const manual = s.compactTrigger === 'manual';
           delete s.compactStartedAt;
           delete s.compactTrigger;
-          s.status = 'working';
+          s.status = manual ? 'idle' : 'working';
+          if (manual) s.turnOpen = false;
           s.lastActivity = now;
           s.claudeClosed = false;
           if (!s.sessionStart) s.sessionStart = now;
@@ -116,6 +179,14 @@ export function processHookEvent(event, input = {}, now = Date.now()) {
         s.lastUserPrompt = now;
         s.lastActivity = now;
         s.status = 'thinking';
+        // A tool interrupted by the user gets no PostToolUse — drop its
+        // in-flight marker so applyIdle can't treat it as still running.
+        s.currentTool = null;
+        s.toolStartedAt = null;
+        s.toolsInFlight = {};
+        s.toolsRunning = 0;
+        s.permissionPendingAt = null;
+        s.turnOpen = true;
         s.claudeClosed = false;
         if (!s.sessionStart) s.sessionStart = now;
         if (input.cwd) s.cwd = input.cwd;
@@ -130,11 +201,15 @@ export function processHookEvent(event, input = {}, now = Date.now()) {
       update((s, stale) => {
         s.tools += 1;
         s.toolBreakdown[toolName] = (s.toolBreakdown[toolName] || 0) + 1;
+        // Even a stale start registers (a parallel sibling's PreToolUse can
+        // land after a later one) — unless its own finish already landed.
+        trackToolStart(s, toolName, stale);
         if (!s.sessionStart) s.sessionStart = now;
         if (!stale) {
           s.currentTool = toolName;
           s.currentFile = shortFile(file);
           s.toolStartedAt = now;
+          s.turnOpen = true;
           s.status = 'working';
           s.lastActivity = now;
           s.claudeClosed = false;
@@ -180,11 +255,18 @@ export function processHookEvent(event, input = {}, now = Date.now()) {
         }
       }
       update((s, stale) => {
+        trackToolFinish(s, toolName);
         if (!stale) {
-          s.currentTool = null;
-          s.toolStartedAt = null;
+          showRunningTool(s);
           s.lastActivity = now;
           s.claudeClosed = false;
+          // Nothing left running after a permission prompt: it was approved
+          // (this tool ran) and the turn carries on. With a sibling still
+          // running the prompt may be for that one, so leave it pending.
+          if (!s.toolsRunning) {
+            s.permissionPendingAt = null;
+            if (s.status === 'notification') s.status = 'working';
+          }
         }
         if (!s.sessionStart) s.sessionStart = now;
         if (file && (toolName === 'Write' || toolName === 'Edit' || toolName === 'NotebookEdit')) {
@@ -205,18 +287,69 @@ export function processHookEvent(event, input = {}, now = Date.now()) {
       });
       break;
     }
+    case 'PostToolBatch': {
+      // Claude Code 2.1.118+. Every tool call in the batch has resolved — run,
+      // failed, or denied at a permission prompt (a manual deny fires no other
+      // hook). Nothing is in flight any more and Claude is about to continue
+      // the turn. Batch ids go to toolsDone so a late async PreToolUse for one
+      // of them can't resurrect it.
+      const ids = (Array.isArray(input.tool_calls) ? input.tool_calls : [])
+        .map((c) => c && c.tool_use_id).filter(Boolean);
+      update((s, stale) => {
+        s.toolsInFlight = {};
+        s.toolsRunning = 0;
+        if (ids.length) s.toolsDone = [...(s.toolsDone || []).filter((id) => !ids.includes(id)), ...ids].slice(-DONE_MAX);
+        if (!stale) {
+          s.currentTool = null;
+          s.toolStartedAt = null;
+          s.permissionPendingAt = null;
+          s.status = 'working';
+          s.turnOpen = true;
+          s.lastActivity = now;
+          s.claudeClosed = false;
+        }
+        if (!s.sessionStart) s.sessionStart = now;
+        return s;
+      });
+      break;
+    }
     case 'Notification': {
+      // Claude Code sends many notification kinds; only some mean "waiting on
+      // you". Older versions omit notification_type and only ever sent
+      // permission / idle notices — keep the historical brief-flash behavior.
+      const kind = input.notification_type || null;
+      if (kind === 'idle_prompt') {
+        // "Claude finished responding ~60s ago and you haven't typed." The
+        // turn is definitively over — also the only hook-level end signal
+        // after an Esc interrupt, which fires no Stop.
+        setActivity({ ...TURN_ENDED });
+        break;
+      }
+      const waitingOnUser = !kind || kind === 'permission_prompt' || kind === 'agent_needs_input'
+        || kind === 'elicitation_dialog' || kind === 'elicitation_url_dialog';
+      if (!waitingOnUser) {
+        // auth_success, agent_completed, elicitation_complete, quota_* … —
+        // informational. Liveness only; don't flash "Permission needed".
+        setActivity({});
+        break;
+      }
       update((s) => {
         s.status = 'notification';
         s.lastNotification = now;
         s.lastActivity = now;
         s.claudeClosed = false;
-        s.currentTool = null;
-        s.currentFile = null;
+        if (kind === 'permission_prompt') {
+          // Keep the pending tool's name: once the prompt is approved, the
+          // daemon flips back to 'working' on that tool (see applyIdle).
+          s.permissionPendingAt = now;
+        } else {
+          s.currentTool = null;
+          s.currentFile = null;
+        }
         if (!s.sessionStart) s.sessionStart = now;
         return s;
       });
-      appendEvent({ type: 'notification', ts: now, cwd: input.cwd || null });
+      appendEvent({ type: 'notification', ts: now, kind, cwd: input.cwd || null });
       break;
     }
     case 'PreCompact': {
@@ -240,13 +373,15 @@ export function processHookEvent(event, input = {}, now = Date.now()) {
     }
     case 'PostCompact': {
       // Claude Code 2.1.76+. Older versions only re-fire SessionStart
-      // (source:'compact'), handled above. An auto-compaction resumes the turn
-      // that triggered it; a manual /compact leaves the session waiting on you.
+      // (source:'compact'), handled above. Both fire on newer versions; the
+      // second agrees with the first, so compactTrigger is kept here for the
+      // SessionStart handler. An auto-compaction resumes the turn that
+      // triggered it; a manual /compact leaves the session waiting on you.
       update((s) => {
         const manual = (input.trigger || s.compactTrigger) === 'manual';
         delete s.compactStartedAt;
-        delete s.compactTrigger;
         s.status = manual ? 'idle' : 'working';
+        if (manual) s.turnOpen = false;
         s.lastActivity = now;
         s.claudeClosed = false;
         if (!s.sessionStart) s.sessionStart = now;
@@ -264,6 +399,8 @@ export function processHookEvent(event, input = {}, now = Date.now()) {
         s.claudeClosed = true;
         s.currentTool = null;
         s.currentFile = null;
+        s.turnOpen = false;
+        s.permissionPendingAt = null;
         s.lastActivity = now;
         return s;
       });
@@ -277,10 +414,18 @@ export function processHookEvent(event, input = {}, now = Date.now()) {
       setActivity({});
       break;
     }
-    case 'StopFailure': // the turn ended on an API error — Stop never fires
     case 'Stop':
+    // API errors (rate limit, overload…) end the turn with StopFailure INSTEAD
+    // of Stop (Claude Code 2.1.78+) — without it the card stayed on "Thinking".
+    case 'StopFailure': {
+      setActivity({ ...TURN_ENDED });
+      break;
+    }
     default: {
-      setActivity({ status: 'idle', currentTool: null, currentFile: null });
+      // An event this version doesn't model (a hook registered by hand, or a
+      // newer Claude Code event). Liveness only — treating it as Stop would
+      // flip the card idle mid-turn.
+      setActivity({});
     }
   }
 }
