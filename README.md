@@ -40,39 +40,25 @@ A small Node daemon that takes the lifecycle events Claude Code already fires an
 
 ## install
 
-**macOS / Linux / any Node 18+** — one command:
+**Linux / macOS, Node 18+:**
 
 ```sh
-npx claude-rpc@latest setup
+git clone https://github.com/keyloggerforfree/claude-rpc.git
+cd claude-rpc
+REPO="$PWD"; (cd ~ && npm install "$REPO" --no-save --install-links)
+mkdir -p ~/.local/bin && ln -sf ~/node_modules/claude-rpc/bin/claude-rpc.js ~/.local/bin/claude-rpc
+claude-rpc setup            # wires hooks into Claude Code + starts the daemon
 ```
 
-(The `@latest` matters — bare `npx claude-rpc` will happily reuse a stale cached copy.)
+`~/.local/bin` must be on your `PATH`. Open Claude Code in any project and the card appears within a second. Something looks wrong? `claude-rpc doctor` (or `claude-rpc doctor --fix` to auto-repair).
 
-That installs `claude-rpc` globally, wires the hooks into Claude Code, and starts the daemon — no separate `start` step. Open Claude Code in any project and the card appears within a second. Something looks wrong? `claude-rpc doctor` (or `claude-rpc doctor --fix` to auto-repair).
-
-**Prefer a one-liner that figures it out for you?**
+**Updating** (from inside your checkout):
 
 ```sh
-curl -fsSL https://claude-rpc.com/install | sh
+git pull
+REPO="$PWD"; claude-rpc stop && (cd ~ && npm uninstall claude-rpc --no-save && npm install "$REPO" --no-save --install-links)
+claude-rpc setup            # picks up new hooks, migrates old default templates, starts the daemon
 ```
-
-Detects Node (installs the npm package) or falls back to the prebuilt Apple-Silicon binary, then runs `setup` for you.
-
-**Homebrew** (macOS / Linux):
-
-```sh
-brew install rar-file/claude-rpc/claude-rpc && claude-rpc setup
-```
-
-**Windows (no Node required)** — [grab `claude-rpc.exe` from the latest release](https://github.com/rar-file/claude-rpc/releases/latest) (the standalone CLI — no installer), then run it from the folder you saved it to:
-
-```sh
-.\claude-rpc.exe setup
-```
-
-`setup` copies the exe to a fixed per-user location (so the download can go afterwards) and adds that folder to your user PATH, so `claude-rpc <command>` works in any new terminal. Prefer a GUI? The release's `claude-rpc-<version>-x64-setup.exe` (installer, auto-updates) and `claude-rpc-<version>-x64-portable.exe` (no install) are the desktop dashboard app, which runs the same `setup` for you on first launch.
-
-That's the whole pitch.
 
 > `setup` registers a per-user login-autostart entry (a LaunchAgent on macOS, a `systemd --user` unit on Linux, an `HKCU\…\Run` value on Windows) and wires hooks into Claude Code's `settings.json`, and the daemon reports anonymous totals by default. It ends with one optional y/N — *connect GitHub?* — which publishes a verified public [leaderboard](https://claude-rpc.com/leaderboard) profile only if you say yes (asked once; Enter skips). All of it is reversible (`claude-rpc uninstall`, `community off`, `profile off`) and fully documented in [`SECURITY.md`](SECURITY.md) — read it first if you want to know exactly what runs.
 
@@ -82,13 +68,13 @@ The Discord *desktop* app must be running. The browser client doesn't expose the
 <summary><b>other platforms / from source</b></summary>
 
 ```sh
-git clone https://github.com/rar-file/claude-rpc.git
+git clone https://github.com/keyloggerforfree/claude-rpc.git
 cd claude-rpc
 npm install
 node ./src/cli.js setup     # wires hooks + starts the daemon
 ```
 
-Or `npm install -g claude-rpc && claude-rpc setup` for the global bin. `setup` starts the daemon for you; manage it afterward with `claude-rpc start | stop | status`. Every mode survives `npm update` without losing your `clientId` — user config lives under the per-OS config dir, not inside `node_modules`.
+This runs straight from the checkout in dev mode, which reads `config.json` from the checkout rather than the per-OS config dir. `setup` starts the daemon for you; manage it afterward with `claude-rpc start | stop | restart | status`.
 </details>
 
 <details>
