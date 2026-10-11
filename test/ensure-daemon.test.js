@@ -14,7 +14,42 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-const { shouldSpawnDaemon, claimSingleInstance, isAlive, ensureDaemonRunning } = await import('../src/ensure-daemon.js');
+const { shouldSpawnDaemon, claimSingleInstance, isAlive, ensureDaemonRunning, looksLikeRpcDaemon, findDaemonPids } = await import('../src/ensure-daemon.js');
+
+// ── looksLikeRpcDaemon (stray-daemon scan behind `claude-rpc stop`) ─────
+test('looksLikeRpcDaemon: matches dev, npm and packaged daemons', () => {
+  assert.equal(looksLikeRpcDaemon('/usr/bin/node /home/o/Projects/claude-rpc/src/daemon.js'), true);
+  assert.equal(looksLikeRpcDaemon('/usr/bin/node /home/o/node_modules/claude-rpc/src/daemon.js'), true);
+  assert.equal(looksLikeRpcDaemon('"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\o\\claude-rpc\\src\\daemon.js"'), true);
+  assert.equal(looksLikeRpcDaemon('/home/o/.local/share/claude-rpc/claude-rpc daemon'), true);
+  assert.equal(looksLikeRpcDaemon('"C:\\Users\\o\\AppData\\Roaming\\claude-rpc\\claude-rpc.exe" daemon'), true);
+});
+
+test('looksLikeRpcDaemon: never matches the CLI, hooks, or Claude Code', () => {
+  assert.equal(looksLikeRpcDaemon('node /home/o/node_modules/claude-rpc/bin/claude-rpc.js stop'), false);
+  assert.equal(looksLikeRpcDaemon('node /home/o/node_modules/claude-rpc/src/hook.js SessionStart'), false);
+  assert.equal(looksLikeRpcDaemon('C:\\Users\\o\\AppData\\Roaming\\claude-rpc\\claude-rpc.exe stop'), false);
+  assert.equal(looksLikeRpcDaemon('claude --resume'), false);
+  assert.equal(looksLikeRpcDaemon('node /work/other-app/src/daemon.js'), false);
+  assert.equal(looksLikeRpcDaemon(''), false);
+});
+
+test('looksLikeRpcDaemon: a shell or tool that merely MENTIONS the path is not a daemon', () => {
+  // Regression: a substring match made `stop` SIGTERM the user's own shell.
+  assert.equal(looksLikeRpcDaemon('/usr/bin/zsh -c ps aux | grep /home/o/claude-rpc/src/daemon.js'), false);
+  assert.equal(looksLikeRpcDaemon('tail -f /home/o/node_modules/claude-rpc/src/daemon.js'), false);
+  assert.equal(looksLikeRpcDaemon('vim /home/o/Projects/claude-rpc/src/daemon.js'), false);
+  assert.equal(looksLikeRpcDaemon('node -e setInterval(()=>{},1e9) /x/claude-rpc/src/daemon.js'), false);
+  // …while runtime flags before the script are still fine.
+  assert.equal(looksLikeRpcDaemon('node --max-old-space-size=256 /home/o/claude-rpc/src/daemon.js'), true);
+});
+
+test('findDaemonPids: returns an array of numbers and never includes the caller', () => {
+  const pids = findDaemonPids();
+  assert.ok(Array.isArray(pids));
+  assert.ok(pids.every((p) => Number.isInteger(p) && p > 0));
+  assert.ok(!pids.includes(process.pid));
+});
 
 const NOW = 1_000_000;
 const COOL = 15_000;
