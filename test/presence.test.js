@@ -140,6 +140,37 @@ test('pickActiveSession: single session is always shown', () => {
   assert.equal(r.liveCount, 1);
 });
 
+test('pickActiveSession: a session running a long command stays shown and counted', () => {
+  const now = 10_000_000;
+  const states = [
+    // 'a' started `npm test` 3 min ago — no hooks since, so lastActivity is old.
+    { sessionId: 'a', status: 'working', currentTool: 'Bash', toolStartedAt: now - 180_000, lastActivity: now - 180_000 },
+    // 'b' is a quiet sibling touched more recently.
+    { sessionId: 'b', status: 'idle', lastActivity: now - 90_000 },
+  ];
+  const r = pickActiveSession(states, 'a', now, IDLE);
+  assert.equal(r.sessionId, 'a', 'does not jump to the idle sibling mid-command');
+  assert.equal(r.liveCount, 1);
+});
+
+test('pickActiveSession: a session waiting on a permission prompt stays shown', () => {
+  const now = 10_000_000;
+  const states = [
+    { sessionId: 'a', status: 'notification', permissionPendingAt: now - 120_000, lastActivity: now - 120_000 },
+    { sessionId: 'b', status: 'idle', lastActivity: now - 90_000 },
+  ];
+  assert.equal(pickActiveSession(states, 'a', now, IDLE).sessionId, 'a');
+});
+
+test('pickActiveSession: an interrupted open turn does not keep its session live', () => {
+  const now = 10_000_000;
+  const states = [
+    { sessionId: 'a', status: 'thinking', turnOpen: true, lastActivity: now - 120_000, turnSignals: { interrupted: true, interruptedAtMs: now - 60_000 } },
+    { sessionId: 'b', status: 'working', lastActivity: now - 5_000 },
+  ];
+  assert.equal(pickActiveSession(states, 'a', now, IDLE).sessionId, 'b');
+});
+
 test('pickActiveSession: sticks to the shown session while it stays active', () => {
   const now = 1_000_000;
   const states = [

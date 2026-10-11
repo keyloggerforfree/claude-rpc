@@ -5,6 +5,7 @@ import { languageOf } from './languages.js';
 import { detectGitBranch, detectGitRepo } from './git.js';
 import { fmtResetTime, fmtResetDay } from './usage.js';
 import { fmtNum, fmtHours } from './fmt.js';
+import { workInFlight, permissionPending, permissionApprovedRunning, turnInterrupted } from './presence.js';
 
 const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -919,6 +920,38 @@ export function applyIdle(state, cfg = {}) {
     const sibling = liveSessions.find((s) => s.cwd && s.cwd !== state.cwd && now - (s.mtime || 0) <= staleMs);
     return sibling ? borrowLiveSession(state, [sibling], now) : staleWipe(state);
   }
+
+  // Holds below keep a status up through silence. They need Claude Code to be
+  // plausibly alive: confirmed by the process check, or — when detection is
+  // unavailable — within the usual staleMs window. A confirmed-gone process
+  // (detection answered "no") overrides every hold.
+  const procDead = state.claudeProcessAlive === false;
+  const holdOk = (sinceMs) => !procDead && (procAlive || now - (sinceMs || 0) <= staleMs);
+
+  // Esc interrupt (or a plain deny): the turn is over even though no Stop
+  // fired. Go idle now rather than after the quiet-age timeout.
+  if (turnInterrupted(state) && ['thinking', 'working', 'compacting', 'notification'].includes(state.status)) {
+    return { ...state, status: 'idle', currentTool: null, currentFile: null, filesOpened: [], filesEdited: [], filesRead: [] };
+  }
+
+  // Permission prompt (see presence.permissionPending). Approving or denying
+  // fires no hook, so: a Bash shell started after the prompt → approved and
+  // running ('working'); still unanswered → keep "waiting on you" (it's true)
+  // rather than the old 8s flash to idle; answered some other way (tool_result
+  // in the transcript, interrupt) → the turn carries on, unless interrupted.
+  if (state.status === 'notification' && state.permissionPendingAt) {
+    if (permissionApprovedRunning(state)) return { ...state, status: 'working' };
+    if (permissionPending(state)) {
+      if (holdOk(state.permissionPendingAt)) return state;
+    } else {
+      state = { ...state, status: 'working', permissionPendingAt: null };
+    }
+  }
+
+  // Work in flight (see presence.workInFlight): a long command, extended
+  // thinking or a compaction writes nothing for minutes, and the quiet-age
+  // checks below read that as idle. Hold the current status while it lasts.
+  if (workInFlight(state, now) && holdOk(state.lastActivity)) return state;
 
   // Notification is a brief status — hold it for ~8s after the hook fires,
   // then fall through to normal idle/stale processing.

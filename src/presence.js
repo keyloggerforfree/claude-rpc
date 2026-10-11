@@ -55,6 +55,74 @@ export function selectFrame(rawFrames, vars, status, cursor, intervalMs, framePa
   return frames[cursor.index % frames.length] || {};
 }
 
+// ── "Is Claude actually doing something?" ─────────────────────────────────
+// Hooks and transcript writes both go silent during real work: a long Bash
+// command, extended thinking, a compaction. Every lastActivity-age check reads
+// that silence as idle. These predicates answer from the hook-tracked state
+// instead; applyIdle (status) and pickActiveSession (which session to show)
+// share them so the two always agree.
+
+// Longest silence we still treat as work — clears Bash's 10-minute max
+// timeout, so an end signal that never comes (crash, an event this version
+// doesn't see) can't pin the card on 'working' forever.
+export const WORK_QUIET_MAX_MS = 15 * 60 * 1000;
+// Tools that block on the USER rather than on work — waiting on them is idle.
+const INTERACTIVE_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode']);
+
+// Esc interrupt (a plain deny at a permission prompt is one too): fires no
+// Stop hook, but the transcript records it (the daemon injects
+// state.turnSignals from scanner.readSessionTurnSignals). It only counts if
+// no hook has fired since — a new prompt after it means a new turn. The grace
+// covers a hook that lands just after the interrupt itself.
+const INTERRUPT_GRACE_MS = 2_000;
+export function turnInterrupted(state) {
+  const t = state?.turnSignals;
+  if (!t || t.interrupted !== true) return false;
+  return (t.interruptedAtMs || 0) >= (state.lastActivity || 0) - INTERRUPT_GRACE_MS;
+}
+const interrupted = turnInterrupted;
+
+// A tool is mid-run: PreToolUse fired and it hasn't resolved yet.
+export function toolInFlight(state, now = Date.now()) {
+  if (!state || state.status !== 'working' || !state.currentTool || !state.toolStartedAt) return false;
+  if (INTERACTIVE_TOOLS.has(state.currentTool) || interrupted(state)) return false;
+  return now - state.toolStartedAt <= WORK_QUIET_MAX_MS;
+}
+
+// Claude is working even if nothing has been written for a while: a tool is
+// running, a compaction is under way, or a turn is open (between the prompt
+// and Stop) and hasn't been quiet for WORK_QUIET_MAX_MS.
+export function workInFlight(state, now = Date.now()) {
+  if (!state || interrupted(state)) return false;
+  if (state.status === 'working' && INTERACTIVE_TOOLS.has(state.currentTool)) return false;
+  if (toolInFlight(state, now)) return true;
+  if (state.status === 'compacting') {
+    return !!state.compactStartedAt && now - state.compactStartedAt <= WORK_QUIET_MAX_MS;
+  }
+  if (state.turnOpen === true && (state.status === 'thinking' || state.status === 'working')) {
+    return now - (state.lastActivity || 0) <= WORK_QUIET_MAX_MS;
+  }
+  return false;
+}
+
+// A permission prompt is open and unanswered. Answering it fires no hook, so
+// besides the hook-side clears, a tool_result written after the prompt (the
+// approved tool finished, or a denial with feedback) or an interrupt (a plain
+// deny) resolves it.
+export function permissionPending(state) {
+  if (!state || state.status !== 'notification' || !state.permissionPendingAt) return false;
+  if (interrupted(state)) return false;
+  return (state.turnSignals?.lastToolResultMs || 0) <= state.permissionPendingAt;
+}
+
+// The pending prompt was approved and its Bash command is running: a Bash-tool
+// shell started after the prompt appeared (daemon injects state.toolShellStarts
+// from claude-proc.findToolShellStarts while a prompt is open).
+export function permissionApprovedRunning(state) {
+  if (!permissionPending(state)) return false;
+  return (state.toolShellStarts || []).some((t) => t >= state.permissionPendingAt);
+}
+
 // Pick which session's card to show when several Claude sessions run at once.
 // Each session writes its own state-<id>.json (lastActivity stamped on every
 // hook), so `states` is one entry per session. Behavior: STICK to the currently
@@ -67,8 +135,11 @@ export function pickActiveSession(states, displayedId, now, idleMs) {
   const list = (states || []).filter((s) => s && s.sessionId);
   if (!list.length) return { state: null, sessionId: null, liveCount: 0 };
   // A just-ended session (SessionEnd → claudeClosed) stamps a recent
-  // lastActivity but is gone — never count it live or stick to it.
-  const isLive = (s) => !s.claudeClosed && now - (s.lastActivity || 0) <= idleMs;
+  // lastActivity but is gone — never count it live or stick to it. A session
+  // mid-work (long command, long thinking) or waiting on a permission prompt
+  // is live even though its lastActivity is old.
+  const isLive = (s) => !s.claudeClosed
+    && (now - (s.lastActivity || 0) <= idleMs || workInFlight(s, now) || permissionPending(s));
   const liveCount = list.filter(isLive).length;
   const byRecent = [...list].sort((a, b) => (b.lastActivity || 0) - (a.lastActivity || 0));
   // Stickiness: keep the shown session while it's still active.

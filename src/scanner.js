@@ -679,11 +679,27 @@ const sessionTokenCache = new Map();  // path → { mtime, size, offset, tokens,
 // live count drifts away from the lifetime aggregate. Lines with no id
 // (rare/legacy) are counted every time, matching the full scanner. Also
 // captures the newest turn's model so a mid-session /model switch is visible.
+//
+// Also tracks two turn signals no hook delivers (see readSessionTurnSignals):
+// whether the latest user/assistant entry is an interrupt marker, and when the
+// latest tool_result was written.
 function sumUsageLines(text, tokens, seenIds, meta) {
   for (const line of iterLines(text)) {
     if (!line) continue;
     const r = safeJson(line);
-    if (!r || r.type !== 'assistant') continue;
+    if (!r) continue;
+    if (meta && r.type === 'user') {
+      // Esc writes a user entry "[Request interrupted by user]" (or "… for
+      // tool use]") and fires no Stop hook. Any later entry means it resumed.
+      meta.interrupted = line.includes('[Request interrupted by user');
+      if (meta.interrupted) meta.interruptedAtMs = Date.parse(r.timestamp) || 0;
+      if (line.includes('"tool_result"')) {
+        const ts = Date.parse(r.timestamp);
+        if (ts) meta.lastToolResultMs = ts;
+      }
+    }
+    if (r.type !== 'assistant') continue;
+    if (meta) meta.interrupted = false;
     if (meta && r.message?.model) meta.model = r.message.model;
     if (!r.message?.usage) continue;
     const counted = usageDelta(seenIds || [], r.message?.id, r.message.usage);
@@ -724,7 +740,9 @@ export function readSessionTokens(path) {
     ? { ...cached.tokens }
     : { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   const seenIds = canAppend ? (cached.seenIds || []) : [];
-  const meta = { model: canAppend ? cached.model : null };
+  const meta = canAppend
+    ? { model: cached.model, interrupted: !!cached.interrupted, interruptedAtMs: cached.interruptedAtMs || 0, lastToolResultMs: cached.lastToolResultMs || 0 }
+    : { model: null, interrupted: false, interruptedAtMs: 0, lastToolResultMs: 0 };
   const startOffset = canAppend ? cached.offset : 0;
   let newOffset = startOffset;
 
@@ -754,8 +772,31 @@ export function readSessionTokens(path) {
     }
   }
 
-  lruTouch(sessionTokenCache, path, { mtime: st.mtimeMs, size: st.size, offset: newOffset, tokens, seenIds, model: meta.model });
+  lruTouch(sessionTokenCache, path, {
+    mtime: st.mtimeMs, size: st.size, offset: newOffset, tokens, seenIds, model: meta.model,
+    interrupted: meta.interrupted, interruptedAtMs: meta.interruptedAtMs, lastToolResultMs: meta.lastToolResultMs,
+  });
   return tokens;
+}
+
+// Turn signals from a transcript that no hook delivers:
+//   interrupted       — the latest user/assistant entry is an Esc interrupt
+//                       marker (Esc fires no Stop, so the turn looks open);
+//                       interruptedAtMs is that entry's timestamp
+//   lastToolResultMs  — when the latest tool_result was written; a result
+//                       newer than a permission prompt means it was answered
+//                       (approved-and-finished, or denied with feedback —
+//                       which fires no hook at all)
+// Same cache and mtime discipline as readSessionModel. null if unreadable.
+export function readSessionTurnSignals(path) {
+  const cached = sessionTokenCache.get(path);
+  let mtime;
+  try { mtime = statSync(path).mtimeMs; } catch { return null; }
+  if (!cached || cached.mtime !== mtime) {
+    if (readSessionTokens(path) === null) return null;
+  }
+  const c = sessionTokenCache.get(path);
+  return c ? { interrupted: !!c.interrupted, interruptedAtMs: c.interruptedAtMs || 0, lastToolResultMs: c.lastToolResultMs || 0 } : null;
 }
 
 // Latest assistant-turn model seen in a transcript — the live answer to "which
