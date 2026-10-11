@@ -26,5 +26,10 @@ if (files.length === 0) {
   process.exit(1);
 }
 
-const result = spawnSync(process.execPath, ['--test', ...files], { stdio: 'inherit' });
+// No test may launch a real daemon (see ensureDaemonRunning) — set suite-wide
+// so a new test that fires SessionStart can't reintroduce the leak.
+const result = spawnSync(process.execPath, ['--test', ...files], {
+  stdio: 'inherit',
+  env: { ...process.env, CLAUDE_RPC_NO_AUTOSTART: '1' },
+});
 process.exit(result.status ?? 1);
