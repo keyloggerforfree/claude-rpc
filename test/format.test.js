@@ -10,6 +10,7 @@ const { applyIdle, applyShipped, buildVars, fillTemplate, framePasses } = await 
 // the same helper, not a UTC ISO slice — otherwise on a runner east of UTC the
 // local day and the UTC day differ and the fixture entry is never matched.
 const { dayKey } = await import('../src/scanner.js');
+const { DEFAULT_CONFIG } = await import('../src/default-config.js');
 
 const now = () => Date.now();
 
@@ -435,6 +436,25 @@ test('buildVars: derives fileLang/fileExt from currentFile', () => {
   assert.equal(vars.fileLang, 'TypeScript');
   assert.equal(vars.fileLangUpper, 'TYPESCRIPT');
   assert.equal(vars.dirName, 'foo');
+});
+
+test('buildVars: workLabel describes the actual activity', () => {
+  const label = (o) => buildVars(baseState({ status: 'working', currentTool: null, currentFile: null, ...o }), {}, {}).workLabel;
+  assert.equal(label({ currentTool: 'Edit', currentFile: 'src/a.py' }), 'Working on a Python file');
+  assert.equal(label({ currentTool: 'Read', currentFile: 'lib/x.ex' }), 'Working on an Elixir file');
+  assert.equal(label({ currentTool: 'Read', currentFile: 'notes.zzz' }), 'Working on a file');
+  assert.equal(label({ currentTool: 'Bash' }), 'Running a command', 'the screenshot case: sleep had no file');
+  assert.equal(label({ currentTool: 'WebFetch' }), 'Using WebFetch');
+  assert.equal(label({ currentTool: 'mcp__github__list_prs' }), 'Using github:list_prs');
+  assert.equal(label({}), 'Working', 'between tools');
+  assert.equal(label({ status: 'idle', currentTool: 'Bash' }), 'Working', 'never a tool label off-status');
+});
+
+test('working hover text defaults to {workLabel} and renders without a dangling "a file"', () => {
+  const tpl = DEFAULT_CONFIG.presence.byStatus.working.largeImageText;
+  assert.equal(tpl, '{workLabel}');
+  const vars = buildVars(baseState({ status: 'working', currentTool: 'Bash', currentFile: null }), {}, {});
+  assert.equal(fillTemplate(tpl, vars), 'Running a command');
 });
 
 test('buildVars: token total includes cache', () => {

@@ -438,6 +438,22 @@ export function buildVars(state, config, aggregate) {
   const fullDirName = currentFileNorm ? dirname(currentFileNorm) : '';
   const dirNameOnly = fullDirName ? basename(fullDirName) : '';
 
+  // What Claude is actually doing, for the working status's hover text. The
+  // old default "Working on a {fileLang} file" read "Working on a file" for a
+  // Bash command, any file-less tool, and every gap between tools.
+  let workLabel = 'Working';
+  if (state.status === 'working' && state.currentTool) {
+    if (currentFileNorm) {
+      workLabel = fileLang
+        ? `Working on ${/^[aeiou]/i.test(fileLang) ? 'an' : 'a'} ${fileLang} file`
+        : 'Working on a file';
+    } else if (state.currentTool === 'Bash') {
+      workLabel = 'Running a command';
+    } else {
+      workLabel = `Using ${currentToolPretty}`;
+    }
+  }
+
   // ── Git vars ──────────────────────────────────────────────────────────────
   // Cached per-cwd in src/git.js. Empty strings when not in a repo.
   const gitBranch = detectGitBranch(state.cwd) || '';
@@ -519,6 +535,7 @@ export function buildVars(state, config, aggregate) {
     fileExt,
     fileLang,
     fileLangUpper,
+    workLabel,
     dirName: dirNameOnly,
     fullDirName,
 
