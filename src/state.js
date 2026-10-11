@@ -36,6 +36,27 @@ const DEFAULT_STATE = {
   // from this when the working tool has been running long enough to be
   // worth surfacing (>5s by default — quick reads don't flicker on the card).
   toolStartedAt: null,
+  // Tools between PreToolUse and their PostToolUse/Failure, keyed by
+  // tool_use_id ({ tool, startedAt }) — see hook.js trackToolStart. Async tool
+  // hooks land in any order, which an id-keyed map survives and a count
+  // doesn't. toolsRunning is its size; toolsDone the recently finished ids, so
+  // a PreToolUse landing after its own PostToolUse is ignored.
+  toolsInFlight: {},
+  toolsRunning: 0,
+  toolsDone: [],
+  // A turn is in progress: set by UserPromptSubmit / PreToolUse, cleared by
+  // Stop, StopFailure, an idle_prompt notification or SessionEnd. Lets
+  // applyIdle hold thinking/working through long silent stretches (extended
+  // thinking, compaction) instead of reading them as idle.
+  turnOpen: false,
+  // When a permission_prompt notification fired for a still-unresolved tool.
+  // Cleared when the tool finishes (PostToolUse/Failure), the batch resolves
+  // (PostToolBatch), or the turn ends.
+  permissionPendingAt: null,
+  // This session's transcript (every hook payload carries transcript_path).
+  // The daemon reads its tail for signals hooks never send: a user interrupt
+  // (Esc fires no Stop) and when a pending permission was answered.
+  transcriptPath: null,
   // Set by PostToolUse when a ship is observed (a git push / commit, or a
   // `gh pr|issue|release create` — see ships.classifyShip).
   // format.applyShipped promotes status to 'shipped' for shippedFrameSec

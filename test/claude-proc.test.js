@@ -7,7 +7,28 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-const { looksLikeClaudeCode, parsePsLine } = await import('../src/claude-proc.js');
+const { looksLikeClaudeCode, parsePsLine, parseEtime, parseToolShellLines } = await import('../src/claude-proc.js');
+
+// ── Bash-tool shells (permission-approval detection) ───────────────────
+test('parseEtime handles every ps etime shape', () => {
+  assert.equal(parseEtime('00:07'), 7);
+  assert.equal(parseEtime('01:05'), 65);
+  assert.equal(parseEtime('2:01:05'), 7265);
+  assert.equal(parseEtime('1-02:01:05'), 93665);
+  assert.ok(Number.isNaN(parseEtime('')));
+  assert.ok(Number.isNaN(parseEtime('abc')));
+});
+
+test('parseToolShellLines picks out Claude Code Bash-tool shells only', () => {
+  const now = 1_000_000_000;
+  const out = [
+    '      00:03 /usr/bin/zsh -c source /home/o/.claude/shell-snapshots/snapshot-zsh-1-x.sh 2>/dev/null || true && eval \'npm test\'',
+    '   01:00:00 /usr/bin/zsh',
+    '      02:00 claude --resume',
+    '      00:10 bash -c source C:\\Users\\o\\.claude\\shell-snapshots\\snapshot-bash-2.sh && eval ls',
+  ].join('\n');
+  assert.deepEqual(parseToolShellLines(out, now), [now - 3_000, now - 10_000]);
+});
 
 test('parsePsLine strips the fixed-width comm padding ps adds before args', () => {
   // Real Linux `ps -eo comm=,args=` output for a native install.
