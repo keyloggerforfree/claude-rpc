@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 const {
-  parseTranscript, readSessionTokens, readSessionModel, cleanProjectName,
+  parseTranscript, readSessionTokens, readSessionModel, readSessionTurnSignals, cleanProjectName,
   discoverAltProjectDirs, findLiveSessions, aggregateFrom,
 } = await import('../src/scanner.js');
 const { costFor } = await import('../src/pricing.js');
@@ -121,6 +121,35 @@ test('parseTranscript: skips meta and system-reminder user messages', () => {
 });
 
 // ── readSessionTokens ────────────────────────────────────────────────
+
+// ── readSessionTurnSignals (Esc interrupt / answered permission prompt) ──
+test('readSessionTurnSignals: an interrupt marker is seen, and cleared by later output', () => {
+  const { dir, path } = makeTranscript([
+    { type: 'user', message: { content: 'run the tests' } },
+    { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash' }] } },
+    { type: 'user', timestamp: '2026-10-11T10:00:00.000Z',
+      message: { content: [{ type: 'tool_result', is_error: true, content: '[Request interrupted by user for tool use]' }] } },
+    { type: 'user', timestamp: '2026-10-11T10:00:01.000Z',
+      message: { content: [{ type: 'text', text: '[Request interrupted by user for tool use]' }] } },
+  ]);
+  let s = readSessionTurnSignals(path);
+  assert.equal(s.interrupted, true);
+  assert.equal(s.interruptedAtMs, Date.parse('2026-10-11T10:00:01.000Z'));
+  assert.equal(s.lastToolResultMs, Date.parse('2026-10-11T10:00:00.000Z'));
+  // The user types again and Claude answers → no longer interrupted.
+  appendFileSync(path, JSON.stringify({ type: 'user', message: { content: 'try again' } }) + '\n'
+    + JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'ok' }] } }) + '\n');
+  const future = new Date(Date.now() + 5000);
+  utimesSync(path, future, future);
+  s = readSessionTurnSignals(path);
+  assert.equal(s.interrupted, false);
+  assert.equal(s.lastToolResultMs, Date.parse('2026-10-11T10:00:00.000Z'), 'kept across incremental reads');
+  rmSync(dir, { recursive: true });
+});
+
+test('readSessionTurnSignals: null for a missing transcript', () => {
+  assert.equal(readSessionTurnSignals('/no/such/file.jsonl'), null);
+});
 
 test('readSessionTokens: returns null for missing file', () => {
   assert.equal(readSessionTokens('/no/such/file.jsonl'), null);
