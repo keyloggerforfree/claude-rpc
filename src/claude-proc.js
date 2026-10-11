@@ -61,6 +61,19 @@ export function looksLikeClaudeCode(name, cmdline) {
   return false;
 }
 
+// Split one `ps -eo comm=,args=` line into [comm basename, args]. ps pads comm
+// to a fixed column width, so args must be trimmed — otherwise a native
+// `claude --resume` arrives as "         claude --resume" and the ^claude
+// anchor in looksLikeClaudeCode never matches. Exported for tests.
+export function parsePsLine(line) {
+  const trimmed = String(line || '').trim();
+  const sp = trimmed.indexOf(' ');
+  const comm = sp === -1 ? trimmed : trimmed.slice(0, sp);
+  const args = sp === -1 ? '' : trimmed.slice(sp + 1).trimStart();
+  // comm may be a path on some ps builds — compare its basename.
+  return [comm.slice(comm.lastIndexOf('/') + 1), args];
+}
+
 function execText(file, args) {
   return new Promise((resolve) => {
     execFile(file, args, { timeout: EXEC_TIMEOUT_MS, windowsHide: true, maxBuffer: 8 * 1024 * 1024 },
@@ -90,13 +103,8 @@ export async function detectClaudeProcess() {
   const out = await execText('ps', ['-eo', 'comm=,args=']);
   if (out === null) return null;
   for (const line of out.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const sp = trimmed.indexOf(' ');
-    const comm = sp === -1 ? trimmed : trimmed.slice(0, sp);
-    const args = sp === -1 ? '' : trimmed.slice(sp + 1);
-    // comm may be a path on some ps builds — compare its basename.
-    const base = comm.slice(comm.lastIndexOf('/') + 1);
+    if (!line.trim()) continue;
+    const [base, args] = parsePsLine(line);
     if (looksLikeClaudeCode(base, args)) return true;
   }
   return false;
