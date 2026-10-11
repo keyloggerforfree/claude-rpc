@@ -196,7 +196,7 @@ export const DEFAULT_CONFIG = {
       working: {
         details: "Working in {project}",
         state:   "{currentToolPretty} · {currentFilePretty} · {toolElapsed} · {tokensLabel}",
-        largeImageText: "Working on a {fileLang} file",
+        largeImageText: "{workLabel}",
         rotation: [
           // Pops in for ~5min when the session crosses an hour milestone, then
           // the `requires` gate drops it and we're back to the single frame.

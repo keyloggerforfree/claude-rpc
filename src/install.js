@@ -620,6 +620,16 @@ export function migrateConfig({ silent = false } = {}) {
     }
   }
 
+  // byStatus.working.largeImageText was "Working on a {fileLang} file", which
+  // read "Working on a file" for Bash, file-less tools and gaps between tools.
+  // {workLabel} describes the actual activity. Verbatim old default only.
+  const OLD_WORKING_LIT = 'Working on a {fileLang} file';
+  if (cfg.presence.byStatus?.working?.largeImageText === OLD_WORKING_LIT &&
+      DEFAULT_CONFIG.presence?.byStatus?.working?.largeImageText) {
+    cfg.presence.byStatus.working.largeImageText = DEFAULT_CONFIG.presence.byStatus.working.largeImageText;
+    added.push('presence.byStatus.working.largeImageText');
+  }
+
   // v1.4.3: setup's "connect GitHub?" y could die on a server error (the
   // 2026-08-20 → 09-11 KV write-cap outage 500'd /verify/start most of every
   // day) and was never asked again. 1.4.0–1.4.2 recorded no intent, so infer
