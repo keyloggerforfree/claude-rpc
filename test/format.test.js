@@ -69,6 +69,125 @@ test('applyIdle: working stays working with fresh activity', () => {
   assert.equal(r.status, 'working');
 });
 
+// ── in-flight tool (long Bash command: no hooks, no transcript writes) ──
+function runningTool(ageMs, overrides = {}) {
+  return baseState({ status: 'working', currentTool: 'Bash', currentFile: null,
+    toolStartedAt: now() - ageMs, lastActivity: now() - ageMs, liveSessions: [], ...overrides });
+}
+
+test('applyIdle: a long-running tool stays working past idleThresholdSec', () => {
+  const r = applyIdle(runningTool(3 * 60_000, { claudeProcessAlive: true }), { idleThresholdSec: 60, staleSessionMin: 5 });
+  assert.equal(r.status, 'working');
+  assert.equal(r.currentTool, 'Bash', 'tool slot kept so the card can show it');
+});
+
+test('applyIdle: in-flight tool holds working inside staleMs even without process detection', () => {
+  const r = applyIdle(runningTool(3 * 60_000), { idleThresholdSec: 60, staleSessionMin: 5 });
+  assert.equal(r.status, 'working');
+});
+
+test('applyIdle: without process detection an in-flight tool still goes stale after staleMs', () => {
+  const r = applyIdle(runningTool(6 * 60_000), { idleThresholdSec: 60, staleSessionMin: 5 });
+  assert.equal(r.status, 'stale');
+});
+
+test('applyIdle: an in-flight tool older than the cap drops to idle (lost PostToolUse)', () => {
+  const r = applyIdle(runningTool(16 * 60_000, { claudeProcessAlive: true }), { idleThresholdSec: 60, staleSessionMin: 5 });
+  assert.equal(r.status, 'idle');
+  assert.equal(r.currentTool, null);
+});
+
+test('applyIdle: a tool waiting on the USER (AskUserQuestion) idles normally', () => {
+  const r = applyIdle(runningTool(2 * 60_000, { currentTool: 'AskUserQuestion', claudeProcessAlive: true }), { idleThresholdSec: 60, staleSessionMin: 5 });
+  assert.equal(r.status, 'idle');
+});
+
+test('applyIdle: a finished tool (currentTool cleared) still idles normally', () => {
+  const r = applyIdle(runningTool(2 * 60_000, { currentTool: null, claudeProcessAlive: true }), { idleThresholdSec: 60, staleSessionMin: 5 });
+  assert.equal(r.status, 'idle');
+});
+
+// ── open turn / compaction / permission prompt ─────────────────────────
+const CFG = { idleThresholdSec: 60, staleSessionMin: 5 };
+const quiet = (status, ageMs, overrides = {}) => baseState({
+  status, turnOpen: true, lastActivity: now() - ageMs, liveSessions: [], claudeProcessAlive: true, ...overrides,
+});
+
+test('applyIdle: long extended thinking in an open turn stays thinking', () => {
+  assert.equal(applyIdle(quiet('thinking', 3 * 60_000), CFG).status, 'thinking');
+});
+
+test('applyIdle: an Esc-interrupted turn (no Stop) is not held', () => {
+  const r = applyIdle(quiet('thinking', 3 * 60_000, { turnSignals: { interrupted: true, interruptedAtMs: now() - 60_000 } }), CFG);
+  assert.equal(r.status, 'idle');
+});
+
+test('applyIdle: an interrupt goes idle at once, not after the quiet timeout', () => {
+  const r = applyIdle(quiet('working', 5_000, { turnSignals: { interrupted: true, interruptedAtMs: now() - 1_000 } }), CFG);
+  assert.equal(r.status, 'idle');
+});
+
+test('applyIdle: an interrupt from BEFORE the latest hook (a new prompt) is ignored', () => {
+  // Esc 3 min ago, then the user typed a new prompt 2 min ago — that turn is live.
+  const r = applyIdle(quiet('thinking', 2 * 60_000, { turnSignals: { interrupted: true, interruptedAtMs: now() - 3 * 60_000 } }), CFG);
+  assert.equal(r.status, 'thinking');
+});
+
+test('applyIdle: an interrupted long command is not held either', () => {
+  const r = applyIdle(quiet('working', 3 * 60_000, { currentTool: 'Bash', toolStartedAt: now() - 3 * 60_000,
+    turnSignals: { interrupted: true, interruptedAtMs: now() - 60_000 } }), CFG);
+  assert.equal(r.status, 'idle');
+});
+
+test('applyIdle: an open turn quiet past the cap drops to idle', () => {
+  assert.equal(applyIdle(quiet('working', 16 * 60_000), CFG).status, 'idle');
+});
+
+test('applyIdle: a long compaction stays compacting', () => {
+  const r = applyIdle(quiet('compacting', 2 * 60_000, { compactStartedAt: now() - 2 * 60_000 }), CFG);
+  assert.equal(r.status, 'compacting');
+});
+
+test('applyIdle: AskUserQuestion waiting on the user is not held by the open turn', () => {
+  const r = applyIdle(quiet('working', 2 * 60_000, { currentTool: 'AskUserQuestion', toolStartedAt: now() - 2 * 60_000 }), CFG);
+  assert.equal(r.status, 'idle');
+});
+
+test('applyIdle: a confirmed-gone Claude Code process overrides every hold', () => {
+  const r = applyIdle(quiet('thinking', 2 * 60_000, { claudeProcessAlive: false }), CFG);
+  assert.equal(r.status, 'stale');
+});
+
+const prompt = (overrides = {}) => quiet('notification', 30_000, {
+  currentTool: 'Bash', toolStartedAt: now() - 31_000, permissionPendingAt: now() - 30_000,
+  lastNotification: now() - 30_000, ...overrides,
+});
+
+test('applyIdle: an unanswered permission prompt keeps "waiting on you" past the 8s flash', () => {
+  assert.equal(applyIdle(prompt(), { ...CFG, notificationWindowSec: 8 }).status, 'notification');
+});
+
+test('applyIdle: a Bash shell started after the prompt means approved → working', () => {
+  const r = applyIdle(prompt({ toolShellStarts: [now() - 20_000] }), CFG);
+  assert.equal(r.status, 'working');
+  assert.equal(r.currentTool, 'Bash');
+});
+
+test('applyIdle: a shell that predates the prompt is not an approval', () => {
+  assert.equal(applyIdle(prompt({ toolShellStarts: [now() - 120_000] }), CFG).status, 'notification');
+});
+
+test('applyIdle: a tool_result after the prompt (denied with feedback) resumes the turn', () => {
+  const r = applyIdle(prompt({ turnSignals: { interrupted: false, lastToolResultMs: now() - 10_000 } }), CFG);
+  assert.equal(r.status, 'working');
+});
+
+test('applyIdle: a plain deny (interrupt) releases the prompt and the turn', () => {
+  const r = applyIdle(prompt({ turnSignals: { interrupted: true, interruptedAtMs: now() - 10_000, lastToolResultMs: now() - 10_000 } }), CFG);
+  assert.equal(r.status, 'idle');
+  assert.equal(r.currentTool, null);
+});
+
 test('applyIdle: notification expires after window', () => {
   const past = now() - 30_000;
   const s = baseState({ status: 'notification', lastNotification: past });

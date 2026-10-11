@@ -89,12 +89,13 @@ manage the daemon yourself via `claude-rpc start` / `stop`).
 `setup` adds command hooks to Claude Code's `settings.json` for nine lifecycle
 events — `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
 `Stop`, `SubagentStop`, `Notification`, `SessionEnd`, `PreCompact` — plus up to
-three newer ones that are **version-gated**: `PostToolUseFailure` (Claude Code
-2.0.56+), `PostCompact` (2.1.76+) and `StopFailure` (2.1.78+). Claude Code
-rejects the *whole* hooks block (yours included) when it sees an event name it
-doesn't know, so each of the three is wired only once the installed Claude Code
-version — read from the newest transcript (`detectClaudeCodeVersion`) — is known
-to support it, and is removed again if it isn't. Each entry looks like:
+four newer ones that are **version-gated**: `PostToolUseFailure` (Claude Code
+2.0.56+), `PostCompact` (2.1.76+), `StopFailure` (2.1.78+) and `PostToolBatch`
+(2.1.118+). Claude Code rejects the *whole* hooks block (yours included) when it
+sees an event name it doesn't know, so each of the four is wired only once the
+installed Claude Code version — read from the newest transcript
+(`detectClaudeCodeVersion`) — is known to support it, and is removed again if
+it isn't. Each entry looks like:
 
 ```jsonc
 { "matcher": "", "hooks": [{ "type": "command", "command": "\"<exe>\" hook Stop", "_claudeRpc": true }] }
@@ -118,8 +119,15 @@ described under **Scope** below.
   `src/hook.js`, `processHookEvent`.
 - **What the hook reads:** tool name, file path of the active tool, token usage
   counters, and `git push`/`git commit` detection (for the "just shipped"
-  card). It writes only to local state/log files. It does not read file
-  *contents*, prompts, or responses beyond the usage counters Claude provides.
+  card), the notification *type* (to tell a permission prompt from an idle
+  reminder), and the session's transcript *path*. It writes only to local
+  state/log files. It does not read file *contents*, prompts, or responses
+  beyond the usage counters Claude provides.
+- **What the daemon reads from the transcript tail**, for signals no hook
+  delivers: whether the latest entry is Claude Code's `[Request interrupted by
+  user]` marker (Esc fires no `Stop` hook), and the timestamp of the latest tool
+  result (to tell when a permission prompt was answered). Same file and parse
+  as the live token count; nothing is stored or sent.
 - **`SessionStart` additionally self-heals the daemon:** if none is running it
   spawns the (detached) daemon so presence is assured cross-platform — see §1
   and `ensureDaemonRunning`. Best-effort, gated by `autostart` (default on). It
@@ -382,6 +390,12 @@ untrusted or remote input into a shell:
   so an open-but-quiet session shows *idle* instead of vanishing. Read-only, the
   result is one boolean, nothing is logged or sent anywhere; disable with
   `processDetection: false`.
+- `ps -eo etime=,args=` (macOS/Linux) / `powershell.exe Get-CimInstance
+  Win32_Process` filtered to command lines containing `shell-snapshots`
+  (Windows) — polled every 3s **only while a permission prompt is open**, to
+  see whether Claude Code's Bash tool started the approved command (its shells
+  source `~/.claude/shell-snapshots/`). Only those shells' start times are kept,
+  in memory; nothing is logged or sent. Also covered by `processDetection: false`.
 - `gh gist` / `gh --version` — gist badge publishing, only under 3b
   (`src/gist.js`).
 - `npm root -g` / `npm install -g` — resolve / promote the global install during

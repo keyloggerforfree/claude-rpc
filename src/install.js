@@ -79,6 +79,10 @@ export const OPTIONAL_EVENTS = {
   PostToolUseFailure: '2.0.56', // a failed tool call never fires PostToolUse
   PostCompact: '2.1.76',
   StopFailure: '2.1.78',        // a turn that ends on an API error never fires Stop
+  // No changelog entry; verified against the published packages: absent from
+  // 2.1.117's hook-event list, present (with its handler) from 2.1.118. The
+  // only signal that a tool denied at a permission prompt is resolved.
+  PostToolBatch: '2.1.118',
 };
 
 export function versionAtLeast(v, min) {

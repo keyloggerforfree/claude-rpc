@@ -6,8 +6,8 @@ import { Client, isBridgeUser } from './discord-ipc.js';
 import { readState, sweepStaleStateTmp, listSessionStates, sweepStaleSessionStates } from './state.js';
 import { makeRotationCursor, pickFrames, selectFrame, resolveLargeImageKey, shouldShowGithubButton, pickActiveSession, throttleDecision } from './presence.js';
 import { buildVars, fillTemplate, framePasses, applyIdle, applyShipped, applyTrigger, humanProject } from './format.js';
-import { scan, readAggregate, findLiveSessions, readSessionTokens, readSessionModel } from './scanner.js';
-import { detectClaudeProcess } from './claude-proc.js';
+import { scan, readAggregate, findLiveSessions, readSessionTokens, readSessionModel, readSessionTurnSignals } from './scanner.js';
+import { detectClaudeProcess, findToolShellStarts } from './claude-proc.js';
 import { detectGithubUrl } from './git.js';
 import { applyPrivacy } from './privacy.js';
 import { pauseUntil } from './pause.js';
@@ -194,6 +194,56 @@ if (sweepTimer.unref) sweepTimer.unref();
 // + unit-tested). The rotation cursor (rotationCursor) is owned here and passed
 // into selectFrame.
 
+// Signals no hook delivers, read from the session's transcript tail (an Esc
+// interrupt, when a permission prompt was answered — see
+// scanner.readSessionTurnSignals). Only for sessions where they can matter:
+// an open turn or an open prompt. mtime-cached, so cheap per tick.
+function attachTurnSignals(s) {
+  if (!s || s.turnSignals !== undefined || !s.transcriptPath) return;
+  if (!s.turnOpen && !s.permissionPendingAt) return;
+  s.turnSignals = readSessionTurnSignals(s.transcriptPath);
+}
+
+// ── Permission-approval watch ──────────────────────────────────────────────
+// Approving a permission prompt fires no hook; for the Bash tool the approval
+// shows up as a new shell in the process table (claude-proc.findToolShellStarts).
+// The regular process poll is 60s — far too slow to notice an approval — so
+// while a prompt is open we poll every PERMISSION_POLL_MS, and stop when it
+// closes. toolShellStarts: start times (ms) from the last poll; null when not
+// watching or detection failed (applyIdle then just keeps "waiting on you").
+const PERMISSION_POLL_MS = 3_000;
+let toolShellStarts = null;
+let permissionWatchTimer = null;
+let permissionPollBusy = false;
+async function pollToolShells() {
+  if (permissionPollBusy) return;
+  permissionPollBusy = true;
+  try {
+    const starts = await findToolShellStarts();
+    if (!permissionWatchTimer) return; // the prompt closed while we were polling
+    const changed = JSON.stringify(starts) !== JSON.stringify(toolShellStarts);
+    toolShellStarts = starts;
+    if (changed) pushPresence();
+  } catch (e) {
+    log('tool-shell poll failed:', e.message);
+  } finally {
+    permissionPollBusy = false;
+  }
+}
+function syncPermissionWatch(state) {
+  const open = state.status === 'notification' && !!state.permissionPendingAt
+    && config.processDetection !== false;
+  if (open && !permissionWatchTimer) {
+    permissionWatchTimer = setInterval(pollToolShells, PERMISSION_POLL_MS);
+    if (permissionWatchTimer.unref) permissionWatchTimer.unref();
+    pollToolShells();
+  } else if (!open && permissionWatchTimer) {
+    clearInterval(permissionWatchTimer);
+    permissionWatchTimer = null;
+    toolShellStarts = null;
+  }
+}
+
 // Resolve the raw state file into the final presence state: idle/stale, shipped
 // and trigger overlays, live-session token enrichment, and the privacy verdict.
 // Run ONCE per tick (in pushPresence) and reused by buildActivity, so the
@@ -208,6 +258,9 @@ function resolvePresence() {
   // and the GitHub button — both follow the displayed session). Fall back to
   // the legacy global state.json when there are no per-session files.
   const sessions = listSessionStates();
+  // Transcript turn signals for every session BEFORE picking, so an
+  // interrupted turn doesn't keep its session "live" in the picker.
+  for (const s of sessions) attachTurnSignals(s);
   if (sessions.length) {
     const idleMs = Math.max(30_000, (config.idleThresholdSec || 60) * 1000);
     const picked = pickActiveSession(sessions, displayedSessionId, Date.now(), idleMs);
@@ -226,6 +279,11 @@ function resolvePresence() {
   // Same for OS-level process liveness (claude-proc poll), unless the state
   // already carries a verdict.
   if (state.claudeProcessAlive === undefined) state.claudeProcessAlive = claudeProcAlive;
+  // Permission-approval evidence (Bash-tool shell start times) — polled only
+  // while the shown session has a prompt open; see syncPermissionWatch.
+  attachTurnSignals(state); // legacy single state.json path (no-op if attached)
+  syncPermissionWatch(state);
+  if (state.toolShellStarts === undefined) state.toolShellStarts = toolShellStarts;
   state = applyIdle(state, config);
   // Shipped overlay sits on top of idle/working/thinking — but never over
   // stale (we don't celebrate when Claude isn't running).

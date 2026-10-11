@@ -81,6 +81,56 @@ function execText(file, args) {
   });
 }
 
+// ── Bash-tool shells (permission-approval detection) ──────────────────────
+// Approving a permission prompt fires no hook. For the Bash tool, though, the
+// approval is visible in the process table: Claude Code runs each command in a
+// fresh shell that sources a snapshot from ~/.claude/shell-snapshots/. A shell
+// that started AFTER the prompt appeared means the command was approved and is
+// running. The daemon polls this only while a permission prompt is open.
+
+// ps `etime` ([[dd-]hh:]mm:ss) → seconds. `etime` rather than `etimes`: BSD/
+// macOS ps has no etimes. NaN on garbage. Exported for tests.
+export function parseEtime(s) {
+  const m = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/.exec(String(s || '').trim());
+  if (!m) return NaN;
+  const [, d = 0, h = 0, mi, se] = m;
+  return ((+d * 24 + +h) * 60 + +mi) * 60 + +se;
+}
+
+// `ps -eo etime=,args=` output → start times (ms) of Bash-tool shells.
+// Exported for tests.
+export function parseToolShellLines(out, now = Date.now()) {
+  const starts = [];
+  for (const line of String(out || '').split('\n')) {
+    const m = /^\s*(\S+)\s+(.*)$/.exec(line);
+    if (!m || !m[2].replace(/\\/g, '/').includes('/.claude/shell-snapshots/')) continue;
+    const sec = parseEtime(m[1]);
+    if (Number.isFinite(sec)) starts.push(now - sec * 1000);
+  }
+  return starts;
+}
+
+// Start times (ms) of running Bash-tool shells; null when the platform can't
+// be queried (callers then treat approval as unknown). Never throws.
+export async function findToolShellStarts() {
+  if (process.platform === 'win32') {
+    // The Bash tool runs through Git Bash on Windows; match the snapshot path
+    // in any process's command line rather than guessing the shell's name.
+    const script = "Get-CimInstance Win32_Process -Filter \"CommandLine LIKE '%shell-snapshots%'\" | ForEach-Object { [string][long]((Get-Date) - $_.CreationDate).TotalSeconds + ' ' + $_.CommandLine }";
+    const out = await execText('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script]);
+    if (out === null) return null;
+    const now = Date.now();
+    const starts = [];
+    for (const line of out.split('\n')) {
+      const m = /^\s*(\d+)\s+(.*)$/.exec(line);
+      if (m && m[2].replace(/\\/g, '/').includes('/.claude/shell-snapshots/')) starts.push(now - Number(m[1]) * 1000);
+    }
+    return starts;
+  }
+  const out = await execText('ps', ['-eo', 'etime=,args=']);
+  return out === null ? null : parseToolShellLines(out);
+}
+
 // Resolve to true/false when the platform answered, null when the query itself
 // failed (missing tool, timeout, unsupported platform) — null means "unknown"
 // and callers must fall back to the old transcript-only behavior. Never throws.
