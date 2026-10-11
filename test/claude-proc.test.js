@@ -7,7 +7,25 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-const { looksLikeClaudeCode } = await import('../src/claude-proc.js');
+const { looksLikeClaudeCode, parsePsLine } = await import('../src/claude-proc.js');
+
+test('parsePsLine strips the fixed-width comm padding ps adds before args', () => {
+  // Real Linux `ps -eo comm=,args=` output for a native install.
+  const [base, args] = parsePsLine('claude          claude --resume');
+  assert.equal(base, 'claude');
+  assert.equal(args, 'claude --resume');
+  assert.equal(looksLikeClaudeCode(base, args), true);
+});
+
+test('parsePsLine keeps the daemon itself unmatched despite padding', () => {
+  const [base, args] = parsePsLine('node-MainThread /usr/bin/node /home/o/node_modules/claude-rpc/src/daemon.js');
+  assert.equal(looksLikeClaudeCode(base, args), false);
+});
+
+test('parsePsLine handles a path comm and a comm with no args', () => {
+  assert.deepEqual(parsePsLine('/usr/bin/claude   claude'), ['claude', 'claude']);
+  assert.deepEqual(parsePsLine('  claude  '), ['claude', '']);
+});
 
 test('matches the native binary by process name when no command line is visible', () => {
   assert.equal(looksLikeClaudeCode('claude.exe', ''), true);
