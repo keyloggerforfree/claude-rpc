@@ -48,6 +48,59 @@ export function daemonAlive(pidPath = PID_PATH) {
   return pid && isAlive(pid) ? pid : 0;
 }
 
+// Does this command line look like a claude-rpc daemon? Covers every launch
+// shape spawnDaemonDetached produces, from ANY install — the repo checkout and
+// the npm copy are different paths, and a daemon started under a different
+// TMPDIR keeps its pid file somewhere `daemonAlive()` never looks:
+//   dev/npm  → node …/claude-rpc/src/daemon.js
+//   packaged → …/claude-rpc(.exe) daemon
+// Matched on argv STRUCTURE, not a substring: the executable must be the
+// runtime (or the packaged exe) and daemon.js / `daemon` its first real
+// argument. A substring test also hit any shell, grep or `tail -f` whose
+// command line merely mentioned the path — and stop would SIGTERM it. The CLI
+// itself (`claude-rpc stop`) has no `daemon` argument, so it never matches.
+// Exported for tests.
+export function looksLikeRpcDaemon(cmdline) {
+  const c = String(cmdline || '').replace(/\\/g, '/').toLowerCase().trim();
+  // argv tokens: a "quoted path with spaces" or a bare run of non-spaces.
+  const tokens = (c.match(/"[^"]*"|\S+/g) || []).map((t) => t.replace(/^"|"$/g, ''));
+  if (tokens.length < 2) return false;
+  const exe = tokens[0].slice(tokens[0].lastIndexOf('/') + 1);
+  // First non-flag argument (skips node options like --max-old-space-size=…).
+  const arg = tokens.slice(1).find((t) => !t.startsWith('-')) || '';
+  if (/^(node|nodejs|bun|deno)(\.exe)?$/.test(exe)) return arg.endsWith('/claude-rpc/src/daemon.js');
+  if (/^claude-rpc(\.exe)?$/.test(exe)) return arg === 'daemon';
+  return false;
+}
+
+// Every running claude-rpc daemon's pid except our own, found by scanning the
+// process table instead of trusting a pid file. Sync (a single ps/CIM query)
+// so stopDaemon can stay synchronous. Returns [] when the platform can't be
+// queried — callers then just fall back to the pid file.
+export function findDaemonPids({ exclude = process.pid } = {}) {
+  let out;
+  try {
+    // Required here, not imported: the hook loads this module on every event
+    // and only the CLI's stop/restart ever scan (see spawnDaemonDetached).
+    const { execFileSync } = require('node:child_process');
+    out = process.platform === 'win32'
+      ? execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+        "Get-CimInstance Win32_Process -Filter \"Name='node.exe' OR Name='claude-rpc.exe'\" | ForEach-Object { [string]$_.ProcessId + ' ' + $_.CommandLine }"],
+        { encoding: 'utf8', timeout: 15_000, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] })
+      : execFileSync('ps', ['-eo', 'pid=,args='], { encoding: 'utf8', timeout: 15_000, stdio: ['ignore', 'pipe', 'ignore'] });
+  } catch {
+    return [];
+  }
+  const pids = [];
+  for (const line of out.split('\n')) {
+    const m = line.trim().match(/^(\d+)\s+(.*)$/);
+    if (!m) continue;
+    const pid = Number(m[1]);
+    if (pid !== exclude && looksLikeRpcDaemon(m[2])) pids.push(pid);
+  }
+  return pids;
+}
+
 // The single source of truth for HOW to launch the daemon, shared by every
 // launcher so the CLI and the hook spawn it identically:
 //   packaged → "<canonical exe>" daemon   (prefer the canonical install over a
