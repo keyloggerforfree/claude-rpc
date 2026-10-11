@@ -92,6 +92,12 @@ export function shouldSpawnDaemon({ autostart, daemonPid, lastAttemptMs, now, co
 // marker BEFORE spawning so sibling SessionStart hooks racing this one skip
 // instead of each launching a throwaway. Returns the spawned child, or null.
 export function ensureDaemonRunning({ autostart = true, now = Date.now(), cooldownMs = SPAWN_COOLDOWN_MS } = {}) {
+  // Hard opt-out for the test suite: hook tests fire SessionStart with TMPDIR
+  // pointed at a scratch dir, so no daemon is ever found there and each run
+  // spawned a real detached dev-mode daemon. It outlived the test, was
+  // invisible to `claude-rpc stop` (its pid file lives in the scratch dir),
+  // and pushed unprivatized presence to Discord.
+  if (process.env.CLAUDE_RPC_NO_AUTOSTART) return null;
   let lastAttemptMs = 0;
   try { if (existsSync(SPAWN_MARKER)) lastAttemptMs = statSync(SPAWN_MARKER).mtimeMs; } catch { /* unreadable — treat as never */ }
   if (!shouldSpawnDaemon({ autostart, daemonPid: daemonAlive(), lastAttemptMs, now, cooldownMs })) return null;
