@@ -6,8 +6,18 @@
 // To customize: edit this file and run `claude-rpc rescan`.
 
 const PRICING = {
-  // Fable family — Anthropic's frontier tier above Opus.
-  'fable-5': { input: 10.00, output: 50.00, cacheRead: 1.00, cacheWrite: 12.50 },
+  // Fable family — Anthropic's frontier tier above Opus. 5.1 cut cache reads 4x.
+  'fable-5':   { input: 10.00, output: 50.00, cacheRead: 1.00, cacheWrite: 12.50 },
+  'fable-5-1': { input: 10.00, output: 50.00, cacheRead: 0.25, cacheWrite: 12.50 },
+
+  // 5.x generation (list prices checked 2026-10-14). Haiku 5.5 uses its
+  // <=100K-token-prompt rates; past 100K it's 5x, which a per-token table
+  // can't express — Claude Code prompts are usually under that.
+  'opus-5':     { input: 5.00, output: 25.00, cacheRead: 0.50, cacheWrite: 6.25 },
+  'opus-5-5':   { input: 4.00, output: 20.00, cacheRead: 0.20, cacheWrite: 5.00 },
+  'sonnet-5':   { input: 2.00, output: 10.00, cacheRead: 0.20, cacheWrite: 2.50 },
+  'sonnet-5-5': { input: 2.00, output: 10.00, cacheRead: 0.10, cacheWrite: 2.50 },
+  'haiku-5-5':  { input: 0.10, output: 0.50,  cacheRead: 0.01, cacheWrite: 0.125 },
 
   // Opus 4.x family. 4.0/4.1 launched at $15/$75; the list price dropped to
   // $5/$25 with Opus 4.5 and has held through 4.8.
@@ -49,7 +59,8 @@ const TIERS = new Set(['opus', 'sonnet', 'haiku', 'fable']);
 // → sonnet, in that order.
 export function pricingKeyFor(modelId) {
   if (!modelId) return 'sonnet';
-  const parts = String(modelId).toLowerCase().split('-');
+  // Drop a context-window tag like `[1m]` (claude-opus-5-5[1m]) before parsing.
+  const parts = String(modelId).toLowerCase().replace(/\[[^\]]*\]/g, '').split('-');
 
   let tier = null;
   let tierIdx = -1;

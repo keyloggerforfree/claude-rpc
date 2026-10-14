@@ -4,6 +4,13 @@ All notable changes to claude-rpc. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+**Added — newer Claude Code**
+
+- **Claude Code's newer hook events.** `PostToolUseFailure` (a failed tool call never fires `PostToolUse`, so the card kept saying "running Bash" until the next tool), `StopFailure` (a turn that ends on an API error never fires `Stop`, so the card stayed "working"), and `PostCompact`. A manual `/compact` now returns to idle, and an auto-compaction resumes work.
+- **They're wired only when your Claude Code supports them.** On older Claude Code, one unknown event name in `settings.json` switches off *every* hook, the user's own included (checked on 2.0.0). claude-rpc reads the Claude Code version from your newest transcript and adds each event only from the release that introduced it: `PostToolUseFailure` 2.0.56, `PostCompact` 2.1.76, `StopFailure` 2.1.78. When Claude Code updates later, the hooks are re-wired on the next daemon start.
+- **Cost estimates for the 5.x models:** Opus 5.5 ($4/$20), Opus 5, Sonnet 5.5 (cache reads $0.10), Sonnet 5, Haiku 5.5 ($0.10/$0.50) and Fable 5.1 (cache reads $0.25). They had been falling back to older per-tier rates, so Haiku 5.5 read 10x too high. `claude-opus-5-5[1m]` style ids now price as their model.
+- Checked against Claude Code 2.1.296: subagents and parallel agents (including workflow agents, which run as subagents) count toward the parent session, appear under it in stats with their own model, and don't show up as extra concurrent sessions.
+
 ## [1.5.1] - 2026-10-14
 
 **Changed — lighter**

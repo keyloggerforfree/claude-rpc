@@ -47,3 +47,25 @@ test('installHooks: upgrading an existing sync entry adds async, keeps third-par
   assert.deepEqual(pre[1], { type: 'command', command: 'other-tool check' }, 'third-party hook untouched');
   assert.equal('async' in hooks.Stop[0].hooks[0], false, 'a stray async on a turn event is removed');
 });
+
+function installAt(home, ccVersion) {
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e',
+    `const { installHooks } = await import(${JSON.stringify(pathToFileURL(INSTALL).href)}); installHooks('x', { silent: true, ccVersion: ${JSON.stringify(ccVersion)} });`],
+  { env: { ...process.env, HOME: home, USERPROFILE: home }, encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  return JSON.parse(readFileSync(join(home, '.claude', 'settings.json'), 'utf8')).hooks;
+}
+
+test('installHooks: newer events only for a Claude Code that knows them (an unknown event disables ALL hooks)', (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'rpc-async-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  assert.equal('StopFailure' in installAt(home, null), false, 'unknown version: none');
+  let hooks = installAt(home, '2.1.296');
+  for (const e of ['PostToolUseFailure', 'PostCompact', 'StopFailure']) assert.ok(e in hooks, e);
+  assert.equal(hooks.PostToolUseFailure[0].hooks[0].async, true);
+  hooks = installAt(home, '2.1.77'); // downgrade: StopFailure must go again
+  assert.equal('StopFailure' in hooks, false);
+  assert.ok('PostCompact' in hooks);
+  hooks = installAt(home, '2.0.0');
+  for (const e of ['PostToolUseFailure', 'PostCompact', 'StopFailure']) assert.equal(e in hooks, false, e);
+});

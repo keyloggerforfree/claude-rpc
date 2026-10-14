@@ -403,3 +403,36 @@ test('async tool hooks: a PreToolUse that lands after its own PostToolUse does n
   assert.equal(s.tools, 1);
   assert.deepEqual(s.filesRead, ['/a/b.js']);
 });
+
+test('PostToolUseFailure clears the running tool and never counts as a ship', () => {
+  resetStateFile();
+  processHookEvent('SessionStart', { cwd: '/tmp/proj' }, 3000);
+  processHookEvent('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'git commit -m x' } }, 3001);
+  processHookEvent('PostToolUseFailure', { tool_name: 'Bash', tool_input: { command: 'git commit -m x' }, error: 'Exit code 1' }, 3002);
+  const s = readState();
+  assert.equal(s.currentTool, null);
+  assert.equal(s.status, 'working', 'the turn is still running');
+  assert.equal(s.justShipped ?? null, null);
+});
+
+test('StopFailure ends the turn like Stop', () => {
+  resetStateFile();
+  processHookEvent('SessionStart', { cwd: '/tmp/proj' }, 4000);
+  processHookEvent('UserPromptSubmit', {}, 4001);
+  processHookEvent('StopFailure', { error: 'rate_limit' }, 4002);
+  assert.equal(readState().status, 'idle');
+});
+
+test('PostCompact clears compacting: auto resumes work, manual goes idle', () => {
+  resetStateFile();
+  processHookEvent('SessionStart', { cwd: '/tmp/proj' }, 5000);
+  processHookEvent('PreCompact', { trigger: 'auto' }, 5001);
+  processHookEvent('PostCompact', { trigger: 'auto' }, 5002);
+  let s = readState();
+  assert.equal(s.status, 'working');
+  assert.ok(!s.compactStartedAt);
+  processHookEvent('PreCompact', { trigger: 'manual' }, 5003);
+  processHookEvent('PostCompact', {}, 5004);
+  s = readState();
+  assert.equal(s.status, 'idle');
+});

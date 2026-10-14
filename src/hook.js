@@ -161,7 +161,9 @@ export function processHookEvent(event, input = {}, at = Date.now()) {
       });
       break;
     }
-    case 'PostToolUse': {
+    case 'PostToolUse':
+    case 'PostToolUseFailure': { // a failed call fires only the latter
+      const failed = event === 'PostToolUseFailure';
       const toolName = input.tool_name || input.toolName || '';
       const toolInput = input.tool_input || input.toolInput || {};
       const file = toolInput.file_path || toolInput.path || toolInput.notebook_path || null;
@@ -172,7 +174,7 @@ export function processHookEvent(event, input = {}, at = Date.now()) {
       let shipKind = null;
       let shipSubject = null;
       let shipBranch = null;
-      if (toolName === 'Bash') {
+      if (toolName === 'Bash' && !failed) { // a failed `git commit` shipped nothing
         shipKind = classifyShip(toolInput.command);
         if (shipKind) {
           const shipCwd = input.cwd || process.cwd();
@@ -243,9 +245,22 @@ export function processHookEvent(event, input = {}, at = Date.now()) {
       appendEvent({ type: 'precompact', ts: now, trigger: input.trigger || input.matcher || null, cwd: input.cwd || null });
       break;
     }
-    // No PostCompact case: Claude Code has no such event. Post-compaction
-    // arrives as SessionStart (source:'compact'), whose resetState clears the
-    // compacting marker — so the `compacting` state ends without a handler.
+    case 'PostCompact': {
+      // Claude Code 2.1.76+. Older versions only re-fire SessionStart
+      // (source:'compact'), handled above. An auto-compaction resumes the turn
+      // that triggered it; a manual /compact leaves the session waiting on you.
+      update((s) => {
+        const manual = (input.trigger || s.compactTrigger) === 'manual';
+        delete s.compactStartedAt;
+        delete s.compactTrigger;
+        s.status = manual ? 'idle' : 'working';
+        s.lastActivity = now;
+        s.claudeClosed = false;
+        if (!s.sessionStart) s.sessionStart = now;
+        return s;
+      });
+      break;
+    }
     case 'SessionEnd': {
       // Authoritative "Claude Code is gone" signal — don't wait on the
       // staleSessionMin timeout. applyIdle short-circuits to stale when it
@@ -269,6 +284,7 @@ export function processHookEvent(event, input = {}, at = Date.now()) {
       setActivity({});
       break;
     }
+    case 'StopFailure': // the turn ended on an API error — Stop never fires
     case 'Stop':
     default: {
       setActivity({ status: 'idle', currentTool: null, currentFile: null });

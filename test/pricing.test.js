@@ -25,7 +25,8 @@ test('pricingKeyFor handles dated suffixes', () => {
 test('pricingKeyFor falls back to the generic tier for unknown versions', () => {
   // A future opus-5-1 we don't know about yet should still route to the
   // closest pricing we ship, not silently become sonnet.
-  assert.equal(pricingKeyFor('claude-opus-5-1'), 'opus');
+  assert.equal(pricingKeyFor('claude-opus-5-1'), 'opus-5'); // known major, unknown minor
+  assert.equal(pricingKeyFor('claude-opus-7-1'), 'opus');
   assert.equal(pricingKeyFor('claude-haiku-9-9'), 'haiku');
 });
 

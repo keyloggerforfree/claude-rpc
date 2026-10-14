@@ -5,7 +5,7 @@
 import {
   existsSync, mkdirSync, readFileSync, writeFileSync,
   copyFileSync, chmodSync, renameSync, statSync,
-  readdirSync, unlinkSync,
+  readdirSync, unlinkSync, openSync, readSync, closeSync,
 } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
@@ -15,7 +15,7 @@ import {
   CLAUDE_SETTINGS, CONFIG_PATH, USER_CONFIG_DIR, ROOT,
   HOOK_SCRIPT, IS_PACKAGED, IS_NPM_INSTALL, IS_NPX,
   CANONICAL_EXE, CANONICAL_INSTALL_DIR, CANONICAL_EXE_NAME, VERSION_STAMP,
-  DAEMON_SCRIPT,
+  DAEMON_SCRIPT, CLAUDE_PROJECTS,
 } from './paths.js';
 import { DEFAULT_CONFIG } from './default-config.js';
 import { VERSION } from './version.js';
@@ -65,7 +65,72 @@ export const EVENTS = [
 // Presence never feeds anything back to Claude, so nothing waits on them;
 // hook.js orders late arrivals by process start time. The once-per-turn events
 // stay synchronous so status transitions (prompt → Stop) are always ordered.
-export const ASYNC_EVENTS = new Set(['PreToolUse', 'PostToolUse']);
+export const ASYNC_EVENTS = new Set(['PreToolUse', 'PostToolUse', 'PostToolUseFailure']);
+
+// Hook events newer Claude Code versions added, with the first version that has
+// each. An event name a Claude Code version doesn't know makes it reject the
+// WHOLE hooks block (every hook in settings.json, the user's own too: checked
+// on 2.0.0), so each is wired only once the installed Claude Code is known to
+// support it, and unwired again if it isn't.
+export const OPTIONAL_EVENTS = {
+  PostToolUseFailure: '2.0.56', // a failed tool call never fires PostToolUse
+  PostCompact: '2.1.76',
+  StopFailure: '2.1.78',        // a turn that ends on an API error never fires Stop
+};
+
+export function versionAtLeast(v, min) {
+  const a = String(v || '').split('.').map(Number);
+  const b = String(min).split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) > (b[i] || 0);
+  }
+  return true;
+}
+
+// The Claude Code version from the newest transcript (every line carries
+// "version"). Reading it off disk works where `claude --version` doesn't: the
+// daemon's PATH often has no `claude`. Null when there's no transcript yet.
+export function detectClaudeCodeVersion({ projectsDir = CLAUDE_PROJECTS } = {}) {
+  let newest = null;
+  let newestMtime = -1;
+  let projects;
+  try { projects = readdirSync(projectsDir); } catch { return null; }
+  for (const proj of projects) {
+    let files;
+    try { files = readdirSync(join(projectsDir, proj)); } catch { continue; }
+    for (const f of files) {
+      if (!f.endsWith('.jsonl')) continue;
+      try {
+        const m = statSync(join(projectsDir, proj, f)).mtimeMs;
+        if (m > newestMtime) { newestMtime = m; newest = join(projectsDir, proj, f); }
+      } catch { /* vanished mid-walk */ }
+    }
+  }
+  if (!newest) return null;
+  try {
+    const size = statSync(newest).size;
+    const len = Math.min(size, 65536);
+    const buf = Buffer.alloc(len);
+    const fd = openSync(newest, 'r');
+    try { readSync(fd, buf, 0, len, size - len); } finally { closeSync(fd); }
+    const all = [...buf.toString('utf8').matchAll(/"version":"(\d+\.\d+\.\d+)"/g)];
+    return all.length ? all[all.length - 1][1] : null;
+  } catch { return null; }
+}
+
+export function supportedOptionalEvents(ccVersion) {
+  if (!ccVersion) return [];
+  return Object.keys(OPTIONAL_EVENTS).filter((e) => versionAtLeast(ccVersion, OPTIONAL_EVENTS[e]));
+}
+
+function removeOurHooks(settings, event) {
+  const bucket = settings.hooks[event];
+  if (!Array.isArray(bucket)) return;
+  settings.hooks[event] = bucket
+    .map((entry) => ({ ...entry, hooks: (entry.hooks || []).filter((h) => !isOurHook(h)) }))
+    .filter((entry) => (entry.hooks || []).length > 0);
+  if (settings.hooks[event].length === 0) delete settings.hooks[event];
+}
 
 function readJson(p, fb) {
   try { return JSON.parse(readFileSync(p, 'utf8')); }
@@ -93,7 +158,7 @@ export function isOurHook(h) {
   return !!h && (h._claudeRpc === true || isOurHookCommand(h.command));
 }
 
-export function installHooks(exePath, { silent = false } = {}) {
+export function installHooks(exePath, { silent = false, ccVersion = detectClaudeCodeVersion() } = {}) {
   const settings = readJson(CLAUDE_SETTINGS, {});
   const before = JSON.stringify(settings.hooks || {});
   settings.hooks = settings.hooks || {};
@@ -113,7 +178,12 @@ export function installHooks(exePath, { silent = false } = {}) {
     ? (event) => `"${exePath}" hook ${event}`
     : (event) => `"${node}" "${HOOK_SCRIPT.replace(/\\/g, '/')}" ${event}`;
 
-  for (const event of EVENTS) {
+  const optional = supportedOptionalEvents(ccVersion);
+  for (const event of Object.keys(OPTIONAL_EVENTS)) {
+    if (!optional.includes(event)) removeOurHooks(settings, event);
+  }
+  const events = [...EVENTS, ...optional];
+  for (const event of events) {
     const bucket = settings.hooks[event] = settings.hooks[event] || [];
     const wanted = cmdFor(event);
     const shape = (h) => {
@@ -134,25 +204,18 @@ export function installHooks(exePath, { silent = false } = {}) {
     }
   }
   if (JSON.stringify(settings.hooks) === before) {
-    if (!silent) noop(`hooks wired (${EVENTS.length} events)`);
+    if (!silent) noop(`hooks wired (${events.length} events)`);
     return false;
   }
   writeJson(CLAUDE_SETTINGS, settings);
-  if (!silent) dirtyStep(SYM_OK, 'hooks wired', `${EVENTS.length} events → ${CLAUDE_SETTINGS}`);
+  if (!silent) dirtyStep(SYM_OK, 'hooks wired', `${events.length} events → ${CLAUDE_SETTINGS}`);
   return true;
 }
 
 export function uninstallHooks() {
   const settings = readJson(CLAUDE_SETTINGS, {});
   if (!settings.hooks) return;
-  for (const event of EVENTS) {
-    const bucket = settings.hooks[event];
-    if (!Array.isArray(bucket)) continue;
-    settings.hooks[event] = bucket
-      .map((entry) => ({ ...entry, hooks: (entry.hooks || []).filter((h) => !isOurHook(h)) }))
-      .filter((entry) => (entry.hooks || []).length > 0);
-    if (settings.hooks[event].length === 0) delete settings.hooks[event];
-  }
+  for (const event of [...EVENTS, ...Object.keys(OPTIONAL_EVENTS)]) removeOurHooks(settings, event);
   writeJson(CLAUDE_SETTINGS, settings);
   step(SYM_OK, 'hooks removed', CLAUDE_SETTINGS);
 }
@@ -756,9 +819,17 @@ function warnIfStale() {
 // version. Best-effort and quiet by default; never throws into the caller.
 // Returns { changed, from, rewired }.
 export function selfHealOnUpdate({ exePath = null, silent = true } = {}) {
+  // Stamp = our version, plus (line 2) the optional hook events last wired, so
+  // a Claude Code update that unlocks a new event re-wires too.
   let from = null;
-  try { from = (readFileSync(VERSION_STAMP, 'utf8') || '').trim() || null; } catch { /* first run / unreadable — treat as needing a heal */ }
-  if (from === VERSION) return { changed: false, from, rewired: false };
+  let fromHooks = '';
+  try {
+    const [v, h] = (readFileSync(VERSION_STAMP, 'utf8') || '').trim().split('\n');
+    from = (v || '').trim() || null;
+    fromHooks = (h || '').trim();
+  } catch { /* first run / unreadable — treat as needing a heal */ }
+  const hooksLine = 'hooks:' + supportedOptionalEvents(detectClaudeCodeVersion()).join(',');
+  if (from === VERSION && fromHooks === hooksLine) return { changed: false, from, rewired: false };
   const exe = exePath || ((IS_PACKAGED && existsSync(CANONICAL_EXE)) ? CANONICAL_EXE : process.execPath);
   let rewired = false;
   try { rewired = installHooks(exe, { silent }); } catch { /* best-effort — a hook re-wire must never block daemon startup */ }
@@ -778,7 +849,7 @@ export function selfHealOnUpdate({ exePath = null, silent = true } = {}) {
   } catch { /* best-effort */ }
   try {
     mkdirSync(dirname(VERSION_STAMP), { recursive: true });
-    writeFileSync(VERSION_STAMP, VERSION + '\n');
+    writeFileSync(VERSION_STAMP, VERSION + '\n' + hooksLine + '\n');
   } catch { /* unwritable — we'll just self-heal again next start, which is harmless (idempotent) */ }
   return { changed: true, from, rewired, autostart };
 }
