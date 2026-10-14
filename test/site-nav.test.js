@@ -10,7 +10,8 @@ const { version } = JSON.parse(readFileSync(new URL('../package.json', import.me
 
 test('site nav: every listed page is in sync with the template', () => {
   for (const [rel, cfg] of Object.entries(PAGES)) {
-    const html = readFileSync(new URL(rel, site), 'utf8');
+    // Windows checkouts get CRLF (core.autocrlf); the template emits LF.
+    const html = readFileSync(new URL(rel, site), 'utf8').replace(/\r\n/g, '\n');
     assert.equal(syncPage(html, cfg, version), html, `${rel} drifted — run: node scripts/sync-nav.mjs`);
   }
 });

@@ -37,6 +37,7 @@
     ],
     "files": [
       "main.js",
+      "port.js",
       "preload.js",
       "index.html",
       "styles.css",

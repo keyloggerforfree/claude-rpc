@@ -18,6 +18,11 @@ All notable changes to claude-rpc. Format: [Keep a Changelog](https://keepachang
 - **Token counts past a trillion read as `T`.** The community total crossed 1e12 and every formatter topped out at `B`, so badges and pages showed `5261.86B`. The CLI, dashboard, MCP/recap output, worker badges and cards, and the site now say `5.26T`.
 - `claude-rpc calendar` has a new look: month and weekday labels, quartile shading, and hover titles per day. Its default metric is still hours.
 
+**Fixed**
+
+- **The Windows dashboard opens again.** `port.js` was left out of the packaged `app.asar`, so 1.4.2 and 1.4.3 died on launch with a main-process error (#39). A test now fails if any file the dashboard `require()`s is missing from the package list.
+- **Claude Desktop on Linux no longer counts as Claude Code.** Its Electron child processes carry `--user-data-dir=…/.config/Claude`, which process detection read as a `claude` binary, so the idle card never cleared while the desktop app sat in the tray (#40, thanks @Kexe-Dev in #41).
+
 ## [1.4.3] - 2026-09-14
 
 **Fixed**
