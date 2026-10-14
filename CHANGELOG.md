@@ -4,6 +4,8 @@ All notable changes to claude-rpc. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-10-14
+
 **Added — newer Claude Code**
 
 - **Claude Code's newer hook events.** `PostToolUseFailure` (a failed tool call never fires `PostToolUse`, so the card kept saying "running Bash" until the next tool), `StopFailure` (a turn that ends on an API error never fires `Stop`, so the card stayed "working"), and `PostCompact`. A manual `/compact` now returns to idle, and an auto-compaction resumes work.
