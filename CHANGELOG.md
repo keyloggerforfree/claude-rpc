@@ -4,6 +4,8 @@ All notable changes to claude-rpc. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-10-14
+
 **Changed — lighter**
 
 - **Tool calls no longer wait on claude-rpc.** The `PreToolUse`/`PostToolUse` hooks fire twice per tool call and each cost a node start-up (~90ms), all of it blocking. They're now wired `"async": true`, so Claude Code runs them in the background. Late arrivals are ordered by when each hook was dispatched, so a slow one can't overwrite a newer status. Existing installs are re-wired automatically the first time the updated daemon starts.

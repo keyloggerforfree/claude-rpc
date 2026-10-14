@@ -44,7 +44,7 @@
   "downloadUrl": "https://www.npmjs.com/package/claude-rpc",
   "softwareHelp": "https://github.com/rar-file/claude-rpc#readme",
   "license": "https://github.com/rar-file/claude-rpc/blob/main/LICENSE",
-  "softwareVersion": "1.5.0",
+  "softwareVersion": "1.5.1",
   "dateModified": "2026-07-05",
   "sameAs": [
     "https://github.com/rar-file/claude-rpc",
@@ -610,7 +610,7 @@
 <!-- site-nav -->
 <nav class="site-nav" aria-label="site">
   <div class="sn-in">
-    <a class="sn-brand" href="/"><img src="/img/favicon.png" alt="" width="26" height="26" /> claude-rpc <span class="sn-ver" id="nav-version">v1.5.0</span></a>
+    <a class="sn-brand" href="/"><img src="/img/favicon.png" alt="" width="26" height="26" /> claude-rpc <span class="sn-ver" id="nav-version">v1.5.1</span></a>
     <div class="sn-links">
       <a href="/docs">docs</a>
       <a href="/leaderboard">leaderboard</a>
@@ -907,6 +907,7 @@
       <div class="meta" id="changelog-meta">latest first · <a href="https://github.com/rar-file/claude-rpc/releases">all releases →</a></div>
     </div>
     <ul id="changelog-list">
+      <li><span class="v">v1.5.1</span> <span class="note">lighter: tool calls no longer wait on claude-rpc (async hooks), and the daemon idles at ~55MB instead of 120&ndash;290MB.</span></li>
       <li><span class="v">v1.5.0</span> <span class="note">a live <strong>stats + heatmap card</strong> for your README: <code>GET /stats/&lt;handle&gt;.svg</code>, a GitHub-style grid of your last year shaded against your own year. Linked machines add up. Opt out with <code>profile.heatmap: false</code>. Also: the Windows dashboard opens again, and Claude Desktop on Linux no longer counts as Claude Code.</span></li>
       <li><span class="v">v1.4.3</span> <span class="note">GitHub connects that failed during the Aug&ndash;Sep worker outage now finish on their own: the daemon retries the verification in the background, no command to run.</span></li>
       <li><span class="v">v1.4.2</span> <span class="note">Windows reliability: the dashboard stays live, toasts render, Discord reconnects faster, and Windows now runs in CI.</span></li>
