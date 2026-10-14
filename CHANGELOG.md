@@ -4,6 +4,8 @@ All notable changes to claude-rpc. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-10-14
+
 **Added**
 
 - **A live stats card with a 12-month heatmap for your README:** `GET /stats/<handle>.svg`. It shows lifetime tokens, sessions, hours and streak above a GitHub-style grid of the last year. Under the grid it lists your busiest day, average per active day, longest run and best weekday. `?metric=hours` shades by time instead of tokens. Paste it once and it refreshes itself. `claude-rpc readme` and your `/u/<handle>` page now lead with it.
