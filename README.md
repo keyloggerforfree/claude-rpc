@@ -220,9 +220,9 @@ For a complete account of the sensitive things claude-rpc does — startup persi
 
 No database, no message bus, no background polling when Claude Code isn't running. State on disk you can `cat` and `jq`. **Zero runtime dependencies** — even the Discord Rich Presence IPC client is hand-rolled (`src/discord-ipc.js`).
 
-1. **hook** ([`src/hook.js`](src/hook.js)) — Claude Code spawns it on every lifecycle event. Parses the JSON from stdin and mutates the shared state file. Runs in ~20ms.
-2. **daemon** ([`src/daemon.js`](src/daemon.js)) — long-running. Connects to Discord's local IPC, watches the state file, pushes presence frames every few seconds. Exponential backoff with jitter on reconnect; `daemon.log` rotates at 5 MB.
-3. **scanner** ([`src/scanner.js`](src/scanner.js)) — walks `~/.claude/projects/**/*.jsonl` for all-time aggregates (active time, prompts, tools, tokens, streaks, hotspots, lines, languages, cost, bash, web, subagents). Incremental — re-parses only changed files.
+1. **hook** ([`src/hook.js`](src/hook.js)) — Claude Code spawns it on every lifecycle event. Parses the JSON from stdin and mutates the shared state file. The per-tool-call hooks (`PreToolUse`/`PostToolUse`) are wired `async`, so Claude Code never waits on them; the once-per-turn ones take one node start-up (~90ms).
+2. **daemon** ([`src/daemon.js`](src/daemon.js)) — long-running. Connects to Discord's local IPC, watches the state file, pushes presence frames every few seconds. Idles at ~55MB. Exponential backoff with jitter on reconnect; `daemon.log` rotates at 5 MB.
+3. **scanner** ([`src/scanner.js`](src/scanner.js)) — walks `~/.claude/projects/**/*.jsonl` for all-time aggregates (active time, prompts, tools, tokens, streaks, hotspots, lines, languages, cost, bash, web, subagents). Incremental — re-parses only changed files, and runs in a short-lived child process so the daemon never holds the parse memory.
 
 Persistent state, all human-readable JSON:
 

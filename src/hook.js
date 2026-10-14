@@ -43,16 +43,26 @@ function parseInput() {
 
 // Handle a single hook event. Exported so the bundled exe can dispatch
 // directly (avoids spawning a child process per hook).
-export function processHookEvent(event, input = {}) {
-  const now = Date.now();
+export function processHookEvent(event, input = {}, at = Date.now()) {
+  const now = at;
   // Each session writes its OWN state file (state-<sessionId>.json) so concurrent
   // sessions stop clobbering one shared state.json — that thrash made the card
   // jump between projects, the timer reset, and counters over-count. Subagent
   // hooks carry the parent's session_id, so their activity rolls up correctly.
   // No id (legacy payload) → the global state.json, preserving old behavior.
   const sid = input.session_id || input.sessionId || null;
-  const update = (fn) => updateState(fn, sid);
-  const reset = (seed) => resetState(seed, sid);
+  // PreToolUse/PostToolUse are wired `async` (ASYNC_EVENTS in install.js) so
+  // they never hold up a tool call — which means they can land out of order:
+  // a slow PreToolUse after its own PostToolUse, or a PostToolUse after the
+  // turn's (synchronous) Stop. `now` is the hook process's START time, i.e.
+  // Claude Code's dispatch order, so an event older than the last one applied
+  // is `stale`: it may still add to counters but must not overwrite status.
+  const update = (fn) => updateState((s) => {
+    const stale = now < (s.lastEventAt || 0);
+    if (!stale) s.lastEventAt = now;
+    return fn(s, stale);
+  }, sid);
+  const reset = (seed) => resetState({ lastEventAt: now, ...seed }, sid);
 
   function setActivity(patch) {
     update((s) => {
@@ -100,8 +110,10 @@ export function processHookEvent(event, input = {}) {
       // spawn storms; the daemon's atomic claim reaps any duplicate. Opt out
       // with `autostart:false` in config.
       try {
-        let autostart = true;
-        try { autostart = loadConfig().autostart !== false; } catch { /* unreadable config — default on */ }
+        // CLAUDE_RPC_NO_AUTOSTART=1 is the per-environment opt-out (CI, containers,
+        // the test suite) for when editing config.json isn't practical.
+        let autostart = process.env.CLAUDE_RPC_NO_AUTOSTART !== '1';
+        try { if (autostart) autostart = loadConfig().autostart !== false; } catch { /* unreadable config — default on */ }
         ensureDaemonRunning({ autostart });
       } catch { /* presence is best-effort — never break the user's turn */ }
       break;
@@ -123,21 +135,23 @@ export function processHookEvent(event, input = {}) {
       const toolName = input.tool_name || input.toolName || 'tool';
       const toolInput = input.tool_input || input.toolInput || {};
       const file = toolInput.file_path || toolInput.path || toolInput.notebook_path || null;
-      update((s) => {
+      update((s, stale) => {
         s.tools += 1;
         s.toolBreakdown[toolName] = (s.toolBreakdown[toolName] || 0) + 1;
-        s.currentTool = toolName;
-        s.currentFile = shortFile(file);
-        s.toolStartedAt = now;
-        s.status = 'working';
-        s.lastActivity = now;
-        s.claudeClosed = false;
         if (!s.sessionStart) s.sessionStart = now;
-        // Remember the running Bash command so the daemon can match custom
-        // triggers (config.triggers) against it for a brief overlay frame.
-        if (toolName === 'Bash' && toolInput.command) {
-          s.lastBashCommand = String(toolInput.command).slice(0, 500);
-          s.lastBashAt = now;
+        if (!stale) {
+          s.currentTool = toolName;
+          s.currentFile = shortFile(file);
+          s.toolStartedAt = now;
+          s.status = 'working';
+          s.lastActivity = now;
+          s.claudeClosed = false;
+          // Remember the running Bash command so the daemon can match custom
+          // triggers (config.triggers) against it for a brief overlay frame.
+          if (toolName === 'Bash' && toolInput.command) {
+            s.lastBashCommand = String(toolInput.command).slice(0, 500);
+            s.lastBashAt = now;
+          }
         }
         if (file && (toolName === 'Read' || toolName === 'NotebookEdit')) {
           s.filesOpened = pushUnique(s.filesOpened, file);
@@ -170,11 +184,13 @@ export function processHookEvent(event, input = {}) {
           }
         }
       }
-      update((s) => {
-        s.currentTool = null;
-        s.toolStartedAt = null;
-        s.lastActivity = now;
-        s.claudeClosed = false;
+      update((s, stale) => {
+        if (!stale) {
+          s.currentTool = null;
+          s.toolStartedAt = null;
+          s.lastActivity = now;
+          s.claudeClosed = false;
+        }
         if (!s.sessionStart) s.sessionStart = now;
         if (file && (toolName === 'Write' || toolName === 'Edit' || toolName === 'NotebookEdit')) {
           s.filesEdited = pushUnique(s.filesEdited, file);
@@ -267,7 +283,9 @@ export function processHookEvent(event, input = {}) {
 // ack always goes out.
 export function runHookCli(event) {
   try {
-    processHookEvent(event, parseInput());
+    // performance.timeOrigin = when this process was spawned, so dispatch
+    // order survives node's (variable) startup time — see `stale` above.
+    processHookEvent(event, parseInput(), Math.round(performance.timeOrigin));
   } catch { /* presence is best-effort; never break the user's turn */ }
   finally {
     try { process.stdout.write(JSON.stringify({ continue: true })); } catch { /* stdout closed */ }

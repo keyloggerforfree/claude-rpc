@@ -60,6 +60,13 @@ export const EVENTS = [
   'Stop', 'SubagentStop', 'Notification', 'SessionEnd', 'PreCompact',
 ];
 
+// Wired `"async": true`: Claude Code runs them in the background instead of
+// blocking every tool call on a node cold start (~90ms each, two per call).
+// Presence never feeds anything back to Claude, so nothing waits on them;
+// hook.js orders late arrivals by process start time. The once-per-turn events
+// stay synchronous so status transitions (prompt → Stop) are always ordered.
+export const ASYNC_EVENTS = new Set(['PreToolUse', 'PostToolUse']);
+
 function readJson(p, fb) {
   try { return JSON.parse(readFileSync(p, 'utf8')); }
   catch { return fb; }
@@ -109,15 +116,21 @@ export function installHooks(exePath, { silent = false } = {}) {
   for (const event of EVENTS) {
     const bucket = settings.hooks[event] = settings.hooks[event] || [];
     const wanted = cmdFor(event);
+    const shape = (h) => {
+      const { async: _drop, ...rest } = h;
+      return ASYNC_EVENTS.has(event)
+        ? { ...rest, type: 'command', command: wanted, async: true, _claudeRpc: true }
+        : { ...rest, type: 'command', command: wanted, _claudeRpc: true };
+    };
     const existingEntry = bucket.find((b) =>
       Array.isArray(b.hooks) && b.hooks.some((h) => isOurHook(h))
     );
     if (existingEntry) {
       existingEntry.hooks = existingEntry.hooks.map((h) =>
-        isOurHook(h) ? { ...h, command: wanted, _claudeRpc: true } : h
+        isOurHook(h) ? shape(h) : h
       );
     } else {
-      bucket.push({ matcher: '', hooks: [{ type: 'command', command: wanted, _claudeRpc: true }] });
+      bucket.push({ matcher: '', hooks: [shape({})] });
     }
   }
   if (JSON.stringify(settings.hooks) === before) {

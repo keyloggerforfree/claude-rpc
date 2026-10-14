@@ -13,6 +13,8 @@ import { tmpdir } from 'node:os';
 
 const TMP = mkdtempSync(join(tmpdir(), 'rpc-hook-'));
 process.env.TMPDIR = TMP;
+// SessionStart would otherwise autostart a REAL daemon that outlives the test.
+process.env.CLAUDE_RPC_NO_AUTOSTART = '1';
 // macOS uses $TMPDIR. tmpdir() on linux falls back to /tmp regardless of env,
 // so we ALSO need to swap STATE_PATH directly. paths.js reads at import time
 // — so we have to override before importing state/hook modules.
@@ -376,4 +378,28 @@ test('PostToolUse counts NotebookEdit via notebook_path', () => {
   assert.equal(s.filesEdited.length, 1, 'notebook edit tracked');
   assert.match(s.filesEdited[0], /analysis\.ipynb/);
   try { unlinkSync(statePathFor(sid)); } catch {}
+});
+
+test('async tool hooks: a PreToolUse that lands after Stop counts but does not flip status', () => {
+  resetStateFile();
+  processHookEvent('SessionStart', { cwd: '/tmp/proj' }, 1000);
+  processHookEvent('UserPromptSubmit', {}, 1001);
+  processHookEvent('Stop', {}, 1010);
+  processHookEvent('PreToolUse', { tool_name: 'Bash', tool_input: { command: 'ls' } }, 1005); // dispatched before Stop
+  const s = readState();
+  assert.equal(s.status, 'idle');
+  assert.equal(s.currentTool, null);
+  assert.equal(s.tools, 1, 'counter still applied');
+  assert.equal(s.toolBreakdown.Bash, 1);
+});
+
+test('async tool hooks: a PreToolUse that lands after its own PostToolUse does not stick', () => {
+  resetStateFile();
+  processHookEvent('SessionStart', { cwd: '/tmp/proj' }, 2000);
+  processHookEvent('PostToolUse', { tool_name: 'Read', tool_input: { file_path: '/a/b.js' } }, 2002);
+  processHookEvent('PreToolUse', { tool_name: 'Read', tool_input: { file_path: '/a/b.js' } }, 2001);
+  const s = readState();
+  assert.equal(s.currentTool, null);
+  assert.equal(s.tools, 1);
+  assert.deepEqual(s.filesRead, ['/a/b.js']);
 });

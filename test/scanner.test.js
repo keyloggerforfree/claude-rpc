@@ -537,3 +537,23 @@ test('aggregateFrom: session-length histogram buckets ACTIVE durations (not wall
   assert.equal(sl.longestMs, 6 * HOUR, 'week-long wall clock does not own the record; neither does the subagent');
   assert.equal(sl.totalMs, 5 * 60_000 + 45 * 60_000 + 9 * HOUR);
 });
+
+test('parseTranscript: tiny read chunks give the same result as one big read', () => {
+  // Multi-byte text (accented letters, an emoji) so chunk edges land mid-character,
+  // plus a line far longer than the chunk, plus a partial trailing line.
+  const wide = String.fromCodePoint(0xe9, 0x4e2d, 0x1f680).repeat(40);
+  const recs = [{ type: 'user', sessionId: 's1', cwd: '/tmp/proj', timestamp: '2026-05-22T10:00:00Z', message: { content: wide } }];
+  for (let i = 0; i < 6; i++) {
+    recs.push({ type: 'assistant', timestamp: `2026-05-22T10:0${i}:30Z`,
+      message: { id: `m${i}`, model: 'claude-opus-4-7', usage: { input_tokens: 10 + i, output_tokens: 5 },
+        content: [{ type: 'tool_use', name: 'Write', input: { file_path: '/x.js', content: wide + '\n' + wide } }] } });
+  }
+  const { dir, path } = makeTranscript(recs);
+  appendFileSync(path, '{"type":"assistant","partial');
+  const whole = parseTranscript(path);
+  for (const chunkBytes of [1, 3, 7, 64, 1000]) {
+    assert.deepEqual(parseTranscript(path, null, { chunkBytes }), whole, `chunkBytes=${chunkBytes}`);
+  }
+  assert.equal(whole.inputTokens, 75);
+  rmSync(dir, { recursive: true });
+});

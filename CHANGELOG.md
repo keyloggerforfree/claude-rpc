@@ -4,6 +4,15 @@ All notable changes to claude-rpc. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+**Changed — lighter**
+
+- **Tool calls no longer wait on claude-rpc.** The `PreToolUse`/`PostToolUse` hooks fire twice per tool call and each cost a node start-up (~90ms), all of it blocking. They're now wired `"async": true`, so Claude Code runs them in the background. Late arrivals are ordered by when each hook was dispatched, so a slow one can't overwrite a newer status. Existing installs are re-wired automatically the first time the updated daemon starts.
+- **The daemon idles at ~55MB instead of 120-290MB.** Transcript scans now run in a short-lived child process and read files in 1MB chunks instead of whole, so the parse memory goes back to the OS instead of staying with the always-on daemon. A cold scan of 155MB of transcripts used to leave the daemon at ~230MB.
+
+**Added**
+
+- `CLAUDE_RPC_NO_AUTOSTART=1` stops a session start from launching the daemon, for CI and containers where editing `config.json` isn't practical.
+
 ## [1.5.0] - 2026-10-14
 
 **Added**

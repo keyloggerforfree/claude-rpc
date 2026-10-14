@@ -2674,6 +2674,7 @@ process.on('unhandledRejection', (e) => {
     case 'log':       tailLog(); break;
     case 'hook':      runHookCli(process.argv[3] || 'unknown'); break;
     case 'daemon':    await import('./daemon.js'); break;
+    case 'scan-worker': (await import('./scan-worker.js')).runScanWorker(process.argv.includes('--force')); break;
     default: {
       if (packagedDefault) {
         if (!isInstalled()) {

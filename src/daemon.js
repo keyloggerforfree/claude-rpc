@@ -20,6 +20,7 @@ import { CONFIG_PATH, STATE_PATH, PID_PATH, LOG_PATH, STATE_DIR, AGGREGATE_PATH,
 import { readUsageCache, pollUsage } from './usage.js';
 import { pollDecision, pollIntervalMs } from './watch-poll.js';
 import { claimSingleInstance } from './ensure-daemon.js';
+import { scanInChild } from './scan-worker.js';
 
 if (!existsSync(STATE_DIR)) mkdirSync(STATE_DIR, { recursive: true });
 
@@ -779,16 +780,34 @@ function watchFiles() {
   }, pollIntervalMs());
 }
 
+// Scans run in a short-lived child (scan-worker.js) so the parse garbage dies
+// with it instead of pinning the daemon's memory; the child writes
+// aggregate.json and we re-read it. If the child can't run, scan in-process.
+let scanRunning = false;
 async function runBackgroundScan({ force = false } = {}) {
+  if (scanRunning) return; // a slow cold scan can outlast the rescan interval
+  scanRunning = true;
   try {
     const t0 = Date.now();
-    const { aggregate: agg, scanned, skipped, removed, total } = scan({ force });
+    let res;
+    try {
+      res = await scanInChild({ force });
+      const fresh = readAggregate();
+      if (!fresh) throw new Error('scan worker left no aggregate');
+      res.aggregate = fresh;
+    } catch (e) {
+      log('Scan worker failed, scanning in-process:', e.message);
+      res = scan({ force });
+    }
+    const { aggregate: agg, scanned, skipped, removed, total } = res;
     aggregate = agg;
     log(`Scan complete: ${scanned} parsed / ${skipped} cached / ${removed} removed / ${total} total in ${Date.now() - t0}ms — allHours=${(agg.activeMs / 3_600_000).toFixed(1)}, sessions=${agg.sessions}, tokens=${(agg.inputTokens + agg.outputTokens)}`);
     resetTransmit();
     pushPresence();
   } catch (e) {
     log('Scan failed:', e.message);
+  } finally {
+    scanRunning = false;
   }
 }
 

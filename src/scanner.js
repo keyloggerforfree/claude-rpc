@@ -494,7 +494,9 @@ function parseChunkInto(text, summary, pstate) {
 // (the cross-chunk bookkeeping for parseChunkInto); anything that breaks the
 // append assumption (file shrank, entry predates these fields, `_offset`
 // null) falls back to a from-scratch parse.
-export function parseTranscript(filePath, prev = null) {
+const TRANSCRIPT_CHUNK_BYTES = 1024 * 1024;
+
+export function parseTranscript(filePath, prev = null, { chunkBytes = TRANSCRIPT_CHUNK_BYTES } = {}) {
   const st = statSync(filePath);
   // Append only if this is the SAME file that grew: the current size must be
   // >= the size at the last parse (mirrors readSessionTokens). The old check,
@@ -511,29 +513,39 @@ export function parseTranscript(filePath, prev = null) {
     : { recentIds: [], lastRec: null };
   const startOffset = canAppend ? prev._offset : 0;
 
-  let text = '';
-  const len = st.size - startOffset;
-  if (len > 0) {
+  // Read in fixed chunks rather than the whole file at once: a cold scan walks
+  // every transcript (some are 25MB+), and one full-size Buffer + string per
+  // file pushed the daemon's RSS past 250MB — memory the allocator then kept.
+  // Lines are cut at the last \n BYTE of each chunk; \n is single-byte ASCII
+  // and never occurs inside a multi-byte UTF-8 sequence, so no character is
+  // ever split. A line longer than a chunk just carries over until it ends.
+  let offset = startOffset; // bytes consumed through the last complete line
+  let carry = Buffer.alloc(0);
+  if (st.size > startOffset) {
     let fd;
     try {
       fd = openSync(filePath, 'r');
-      const buf = Buffer.allocUnsafe(len);
-      const n = readSync(fd, buf, 0, len, startOffset);
-      text = buf.toString('utf8', 0, n);
+      const buf = Buffer.allocUnsafe(Math.min(chunkBytes, st.size - startOffset));
+      let pos = startOffset;
+      while (pos < st.size) {
+        const n = readSync(fd, buf, 0, Math.min(buf.length, st.size - pos), pos);
+        if (n <= 0) break;
+        pos += n;
+        const data = carry.length ? Buffer.concat([carry, buf.subarray(0, n)]) : buf.subarray(0, n);
+        const nl = data.lastIndexOf(0x0a);
+        if (nl !== -1) {
+          parseChunkInto(data.toString('utf8', 0, nl + 1), summary, pstate);
+          offset += nl + 1;
+        }
+        carry = Buffer.from(data.subarray(nl + 1)); // copy: `buf` is reused next read
+      }
     } finally {
       if (fd !== undefined) {
         try { closeSync(fd); } catch { /* already closed */ }
       }
     }
   }
-
-  // Consume through the last newline; \n is single-byte ASCII so the boundary
-  // is exact even with multi-byte content in the lines.
-  const lastNl = text.lastIndexOf('\n');
-  const complete = lastNl === -1 ? '' : text.slice(0, lastNl + 1);
-  const remainder = lastNl === -1 ? text : text.slice(lastNl + 1);
-  parseChunkInto(complete, summary, pstate);
-  let offset = startOffset + Buffer.byteLength(complete, 'utf8');
+  const remainder = carry.toString('utf8');
   if (remainder.trim()) {
     if (safeJson(remainder) !== null) {
       // A complete final line that just isn't newline-terminated (fully
