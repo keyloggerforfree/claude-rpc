@@ -171,6 +171,63 @@ test('pickActiveSession: an interrupted open turn does not keep its session live
   assert.equal(pickActiveSession(states, 'a', now, IDLE).sessionId, 'b');
 });
 
+test('pickActiveSession: a session waiting on a prompt yields to one that is working', () => {
+  const now = 10_000_000;
+  const states = [
+    { sessionId: 'a', status: 'notification', permissionPendingAt: now - 60_000, lastActivity: now - 60_000 },
+    { sessionId: 'b', status: 'working', turnOpen: true, lastActivity: now - 5_000 },
+  ];
+  assert.equal(pickActiveSession(states, 'a', now, IDLE).sessionId, 'b', 'shown while it works');
+  assert.equal(pickActiveSession(states, null, now, IDLE).sessionId, 'b', 'also on a fresh pick');
+});
+
+test('pickActiveSession: the waiting session comes back once nothing else is working', () => {
+  const now = 10_000_000;
+  const states = [
+    { sessionId: 'a', status: 'notification', permissionPendingAt: now - 60_000, lastActivity: now - 60_000 },
+    { sessionId: 'b', status: 'idle', turnOpen: false, lastActivity: now - 120_000 },
+  ];
+  assert.equal(pickActiveSession(states, 'b', now, IDLE).sessionId, 'a');
+});
+
+test('pickActiveSession: a shown session that just went idle hands over to one waiting on you', () => {
+  // Row 8 of the two-session table: B was shown while working, then finished
+  // its turn (still "live" — active within idleMs). A waits on a prompt.
+  const now = 10_000_000;
+  const states = [
+    { sessionId: 'a', status: 'notification', permissionPendingAt: now - 60_000, lastActivity: now - 60_000 },
+    { sessionId: 'b', status: 'idle', turnOpen: false, lastActivity: now - 2_000 },
+  ];
+  assert.equal(pickActiveSession(states, 'b', now, IDLE).sessionId, 'a');
+});
+
+test('pickActiveSession: two working sessions do not flip-flop', () => {
+  const now = 10_000_000;
+  const states = [
+    { sessionId: 'a', status: 'working', turnOpen: true, lastActivity: now - 10_000 },
+    { sessionId: 'b', status: 'working', turnOpen: true, lastActivity: now - 1_000 },
+  ];
+  assert.equal(pickActiveSession(states, 'a', now, IDLE).sessionId, 'a', 'equal rank → stays');
+});
+
+test('pickActiveSession: a working session takes over from an idle one that is still shown', () => {
+  const now = 10_000_000;
+  const states = [
+    { sessionId: 'a', status: 'idle', turnOpen: false, lastActivity: now - 3_000 },
+    { sessionId: 'b', status: 'thinking', turnOpen: true, lastActivity: now - 20_000 },
+  ];
+  assert.equal(pickActiveSession(states, 'a', now, IDLE).sessionId, 'b');
+});
+
+test('pickActiveSession: a merely idle sibling does not take over from a waiting session', () => {
+  const now = 10_000_000;
+  const states = [
+    { sessionId: 'a', status: 'notification', permissionPendingAt: now - 60_000, lastActivity: now - 60_000 },
+    { sessionId: 'b', status: 'idle', turnOpen: false, lastActivity: now - 2_000 },
+  ];
+  assert.equal(pickActiveSession(states, 'a', now, IDLE).sessionId, 'a');
+});
+
 test('pickActiveSession: sticks to the shown session while it stays active', () => {
   const now = 1_000_000;
   const states = [

@@ -19,15 +19,19 @@ test('parseEtime handles every ps etime shape', () => {
   assert.ok(Number.isNaN(parseEtime('abc')));
 });
 
-test('parseToolShellLines picks out Claude Code Bash-tool shells only', () => {
+test('parseToolShellLines picks out Claude Code Bash-tool shells, with their parent', () => {
   const now = 1_000_000_000;
+  // Real `ps -eo ppid=,etime=,args=` shape: ppid is right-aligned.
   const out = [
-    '      00:03 /usr/bin/zsh -c source /home/o/.claude/shell-snapshots/snapshot-zsh-1-x.sh 2>/dev/null || true && eval \'npm test\'',
-    '   01:00:00 /usr/bin/zsh',
-    '      02:00 claude --resume',
-    '      00:10 bash -c source C:\\Users\\o\\.claude\\shell-snapshots\\snapshot-bash-2.sh && eval ls',
+    '   6553      00:03 /usr/bin/zsh -c source /home/o/.claude/shell-snapshots/snapshot-zsh-1-x.sh 2>/dev/null || true && eval \'npm test\'',
+    '   6095   01:00:00 /usr/bin/zsh',
+    '   6095      02:00 claude --resume',
+    '    700      00:10 bash -c source C:\\Users\\o\\.claude\\shell-snapshots\\snapshot-bash-2.sh && eval ls',
   ].join('\n');
-  assert.deepEqual(parseToolShellLines(out, now), [now - 3_000, now - 10_000]);
+  assert.deepEqual(parseToolShellLines(out, now), [
+    { start: now - 3_000, ppid: 6553 },
+    { start: now - 10_000, ppid: 700 },
+  ]);
 });
 
 test('parsePsLine strips the fixed-width comm padding ps adds before args', () => {
