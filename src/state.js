@@ -57,6 +57,10 @@ const DEFAULT_STATE = {
   // The daemon reads its tail for signals hooks never send: a user interrupt
   // (Esc fires no Stop) and when a pending permission was answered.
   transcriptPath: null,
+  // This session's Claude Code pid (the hook's parent). Bash-tool shells are
+  // its direct children, so a permission approval can be matched to the
+  // session that asked. Null on Windows / older state.
+  claudePid: null,
   // Set by PostToolUse when a ship is observed (a git push / commit, or a
   // `gh pr|issue|release create` — see ships.classifyShip).
   // format.applyShipped promotes status to 'shipped' for shippedFrameSec

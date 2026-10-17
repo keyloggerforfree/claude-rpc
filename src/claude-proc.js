@@ -97,37 +97,40 @@ export function parseEtime(s) {
   return ((+d * 24 + +h) * 60 + +mi) * 60 + +se;
 }
 
-// `ps -eo etime=,args=` output → start times (ms) of Bash-tool shells.
-// Exported for tests.
+// `ps -eo ppid=,etime=,args=` output → Bash-tool shells as { start, ppid }:
+// when each started (ms) and its parent — the Claude Code process that ran it,
+// so an approval can be matched to the session that asked. Exported for tests.
 export function parseToolShellLines(out, now = Date.now()) {
-  const starts = [];
+  const shells = [];
   for (const line of String(out || '').split('\n')) {
-    const m = /^\s*(\S+)\s+(.*)$/.exec(line);
-    if (!m || !m[2].replace(/\\/g, '/').includes('/.claude/shell-snapshots/')) continue;
-    const sec = parseEtime(m[1]);
-    if (Number.isFinite(sec)) starts.push(now - sec * 1000);
+    const m = /^\s*(\d+)\s+(\S+)\s+(.*)$/.exec(line);
+    if (!m || !m[3].replace(/\\/g, '/').includes('/.claude/shell-snapshots/')) continue;
+    const sec = parseEtime(m[2]);
+    if (Number.isFinite(sec)) shells.push({ start: now - sec * 1000, ppid: Number(m[1]) });
   }
-  return starts;
+  return shells;
 }
 
-// Start times (ms) of running Bash-tool shells; null when the platform can't
-// be queried (callers then treat approval as unknown). Never throws.
+// Running Bash-tool shells as { start, ppid }; null when the platform can't be
+// queried (callers then treat approval as unknown). Never throws.
 export async function findToolShellStarts() {
   if (process.platform === 'win32') {
     // The Bash tool runs through Git Bash on Windows; match the snapshot path
     // in any process's command line rather than guessing the shell's name.
-    const script = "Get-CimInstance Win32_Process -Filter \"CommandLine LIKE '%shell-snapshots%'\" | ForEach-Object { [string][long]((Get-Date) - $_.CreationDate).TotalSeconds + ' ' + $_.CommandLine }";
+    const script = "Get-CimInstance Win32_Process -Filter \"CommandLine LIKE '%shell-snapshots%'\" | ForEach-Object { [string]$_.ParentProcessId + ' ' + [string][long]((Get-Date) - $_.CreationDate).TotalSeconds + ' ' + $_.CommandLine }";
     const out = await execText('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script]);
     if (out === null) return null;
     const now = Date.now();
-    const starts = [];
+    const shells = [];
     for (const line of out.split('\n')) {
-      const m = /^\s*(\d+)\s+(.*)$/.exec(line);
-      if (m && m[2].replace(/\\/g, '/').includes('/.claude/shell-snapshots/')) starts.push(now - Number(m[1]) * 1000);
+      const m = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
+      if (m && m[3].replace(/\\/g, '/').includes('/.claude/shell-snapshots/')) {
+        shells.push({ start: now - Number(m[2]) * 1000, ppid: Number(m[1]) });
+      }
     }
-    return starts;
+    return shells;
   }
-  const out = await execText('ps', ['-eo', 'etime=,args=']);
+  const out = await execText('ps', ['-eo', 'ppid=,etime=,args=']);
   return out === null ? null : parseToolShellLines(out);
 }
 

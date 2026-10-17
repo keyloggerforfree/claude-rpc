@@ -178,6 +178,23 @@ test('applyIdle: a shell that predates the prompt is not an approval', () => {
   assert.equal(applyIdle(prompt({ toolShellStarts: [now() - 120_000] }), CFG).status, 'notification');
 });
 
+test("applyIdle: this session's own shell (parent = its claude pid) is the approval", () => {
+  const r = applyIdle(prompt({ claudePid: 6553, toolShellStarts: [{ start: now() - 20_000, ppid: 6553 }] }), CFG);
+  assert.equal(r.status, 'working');
+});
+
+test("applyIdle: ANOTHER session's new shell is not this prompt's approval", () => {
+  // The case the sandbox run reproduced: session A waits on a prompt while
+  // session B (a different claude process) runs commands.
+  const r = applyIdle(prompt({ claudePid: 6553, toolShellStarts: [{ start: now() - 20_000, ppid: 9999 }] }), CFG);
+  assert.equal(r.status, 'notification');
+});
+
+test('applyIdle: without a recorded claudePid (Windows / older state) any new shell counts', () => {
+  const r = applyIdle(prompt({ toolShellStarts: [{ start: now() - 20_000, ppid: 9999 }] }), CFG);
+  assert.equal(r.status, 'working');
+});
+
 test('applyIdle: a tool_result after the prompt (denied with feedback) resumes the turn', () => {
   const r = applyIdle(prompt({ turnSignals: { interrupted: false, lastToolResultMs: now() - 10_000 } }), CFG);
   assert.equal(r.status, 'working');
