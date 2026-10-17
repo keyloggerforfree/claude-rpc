@@ -117,10 +117,17 @@ export function permissionPending(state) {
 
 // The pending prompt was approved and its Bash command is running: a Bash-tool
 // shell started after the prompt appeared (daemon injects state.toolShellStarts
-// from claude-proc.findToolShellStarts while a prompt is open).
+// from claude-proc.findToolShellStarts while a prompt is open). The shell must
+// belong to THIS session — its parent is the session's Claude Code process —
+// or another session's commands would read as this prompt's approval. Without
+// a recorded claudePid (Windows, older state) any new shell counts.
 export function permissionApprovedRunning(state) {
   if (!permissionPending(state)) return false;
-  return (state.toolShellStarts || []).some((t) => t >= state.permissionPendingAt);
+  return (state.toolShellStarts || []).some((sh) => {
+    const { start, ppid } = typeof sh === 'number' ? { start: sh, ppid: null } : (sh || {});
+    if (!(start >= state.permissionPendingAt)) return false;
+    return !state.claudePid || ppid == null || ppid === state.claudePid;
+  });
 }
 
 // Pick which session's card to show when several Claude sessions run at once.
@@ -142,18 +149,36 @@ export function pickActiveSession(states, displayedId, now, idleMs) {
     && (now - (s.lastActivity || 0) <= idleMs || workInFlight(s, now) || permissionPending(s));
   const liveCount = list.filter(isLive).length;
   const byRecent = [...list].sort((a, b) => (b.lastActivity || 0) - (a.lastActivity || 0));
-  // Stickiness: keep the shown session while it's still active.
+  // Claude is actually doing something in this session — not merely open, and
+  // not stopped on a permission prompt. Used to prefer real work on the card.
+  const isWorking = (s) => !s.claudeClosed && !permissionPending(s)
+    && (workInFlight(s, now)
+      || (['working', 'thinking', 'compacting'].includes(s.status) && now - (s.lastActivity || 0) <= idleMs));
+  // What the card should prefer, highest first: Claude working > Claude
+  // waiting on you (a permission prompt) > a session that's merely open. The
+  // card's audience learns most from "Working"; the prompt itself is visible
+  // in the terminal, but still beats an idle card.
+  const rank = (s) => (isWorking(s) ? 2 : permissionPending(s) ? 1 : 0);
+  // Highest rank among live sessions, most recent within a rank (byRecent is
+  // already sorted by recency, so the first hit per rank is the most recent).
+  const best = (pool) => pool.reduce((top, s) => (!top || rank(s) > rank(top) ? s : top), null);
+  const live = byRecent.filter(isLive);
+  // Stickiness: keep the shown session while it's still active, unless another
+  // session ranks strictly higher — so two working sessions never flip-flop,
+  // but a session that just went idle hands over to one waiting on you.
   const current = list.find((s) => s.sessionId === displayedId);
   if (current && isLive(current)) {
-    return { state: current, sessionId: current.sessionId, liveCount };
+    const challenger = best(live.filter((s) => s !== current));
+    const shown = challenger && rank(challenger) > rank(current) ? challenger : current;
+    return { state: shown, sessionId: shown.sessionId, liveCount };
   }
-  // Otherwise show the most-recently-active live session — or, if none are
-  // live, the most-recent NOT-closed session (a window sitting idle beats one
-  // that fired SessionEnd: the closed session's fresher lastActivity would
-  // otherwise drag the card stale while a sibling is still open), and only
-  // then the most-recent overall so the card follows the last session into
-  // idle/stale rather than blanking.
-  const chosen = byRecent.find(isLive) || byRecent.find((s) => !s.claudeClosed) || byRecent[0];
+  // Otherwise the best live session — or, if none are live, the most-recent
+  // NOT-closed session (a window sitting idle beats one that fired SessionEnd:
+  // the closed session's fresher lastActivity would otherwise drag the card
+  // stale while a sibling is still open), and only then the most-recent
+  // overall so the card follows the last session into idle/stale rather than
+  // blanking.
+  const chosen = best(live) || byRecent.find((s) => !s.claudeClosed) || byRecent[0];
   return { state: chosen, sessionId: chosen.sessionId, liveCount };
 }
 
