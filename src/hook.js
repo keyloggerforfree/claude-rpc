@@ -51,14 +51,22 @@ export function processHookEvent(event, input = {}, now = Date.now()) {
   // Every payload also carries transcript_path; keep it current so the daemon
   // can read signals hooks never send (see state.transcriptPath).
   const tpath = input.transcript_path || null;
+  // The session's own Claude Code process. Claude Code spawns hook commands as
+  // its direct children (checked on Linux: no shell in between), so it's our
+  // parent pid — free to read. Lets the daemon tell this session's Bash-tool
+  // shells from another session's when a permission prompt is approved (see
+  // presence.permissionApprovedRunning). Not recorded on Windows, where the
+  // parent hasn't been verified: a wrapper's pid would never match, which
+  // would pin the card on "waiting on you".
+  const claudePid = process.platform === 'win32' ? null : process.ppid || null;
+  const sessionFields = { ...(tpath ? { transcriptPath: tpath } : {}), ...(claudePid ? { claudePid } : {}) };
   const update = (fn) => updateState((s) => {
     const stale = now < (s.lastEventAt || 0);
     if (!stale) s.lastEventAt = now;
     const next = fn(s, stale) ?? s;
-    if (tpath) next.transcriptPath = tpath;
-    return next;
+    return Object.assign(next, sessionFields);
   }, sid);
-  const reset = (seed) => resetState({ lastEventAt: now, ...(tpath ? { transcriptPath: tpath } : {}), ...seed }, sid);
+  const reset = (seed) => resetState({ lastEventAt: now, ...sessionFields, ...seed }, sid);
 
   // ── Running tools ─────────────────────────────────────────────────────────
   // Keyed by tool_use_id rather than counted: async Pre/PostToolUse arrive in

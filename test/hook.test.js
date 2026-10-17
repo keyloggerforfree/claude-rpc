@@ -279,6 +279,14 @@ test('an event this version does not model is liveness only, not a Stop', () => 
   assert.equal(readState().status, 'thinking');
 });
 
+test("the session's Claude Code pid (the hook's parent) is recorded", { skip: process.platform === 'win32' }, () => {
+  resetStateFile();
+  processHookEvent('SessionStart', { cwd: '/tmp/proj' });
+  assert.equal(readState().claudePid, process.ppid);
+  processHookEvent('Notification', { notification_type: 'permission_prompt' });
+  assert.equal(readState().claudePid, process.ppid);
+});
+
 test('the transcript path from the payload is recorded for the daemon', () => {
   resetStateFile();
   processHookEvent('SessionStart', { cwd: '/tmp/proj', transcript_path: '/tmp/t/a.jsonl' });
