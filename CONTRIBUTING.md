@@ -89,18 +89,34 @@ on, put `// @ts-check` at its top — from then on CI checks that file too.
 
 ## Releases
 
-Releases are **tag-driven**. Bump the version in `package.json`, add the
-`CHANGELOG.md` entry, then push a `v<version>` tag: that triggers
-`.github/workflows/release.yml`, which runs the test matrix, builds the CLI
-binaries and the desktop installers on macOS and Windows, creates the GitHub
-Release with them attached, and publishes to npm (after checking the tag
-matches `package.json`). You don't run `npm publish` by hand.
+One command, from a clean, up-to-date `main` with the changes listed under
+`## [Unreleased]` in `CHANGELOG.md`:
 
-Two steps are still **manual**:
+```sh
+npm run release -- minor --note "one line for the homepage changelog"
+#                  ^ patch | minor | major | x.y.z     (--dry-run to preview)
+```
 
-- **Homebrew formula.** Once the npm publish has landed, run
-  `node scripts/brew-formula.mjs` — it fetches the published tarball, writes
-  its URL and sha256 into `homebrew/claude-rpc.rb` — and commit the result.
+`scripts/release.mjs` bumps the version everywhere it lives (`package.json`,
+`package-lock.json`, `src/version.js`, the site's nav and `softwareVersion`),
+rolls `[Unreleased]` into a dated entry and fixes the compare links, adds the
+`--note` line to the homepage changelog (`--no-site-note` to skip; it's HTML),
+runs `npm test`, then commits, tags `v<version>` and pushes both.
+
+The tag push does the rest. `.github/workflows/release.yml` runs the test
+matrix, builds the CLI binaries and the desktop installers on macOS and
+Windows, publishes to npm with provenance (after checking the tag matches
+`package.json`), and creates the GitHub Release with them attached. The
+Homebrew tap ([rar-file/homebrew-claude-rpc](https://github.com/rar-file/homebrew-claude-rpc))
+bumps its formula from npm on its own, hourly, or right away when
+`release.yml` dispatches it (repo secret `TAP_DISPATCH_TOKEN`). You never run
+`npm publish` or edit the formula by hand.
+
+Still separate:
+
+- **Website.** The Vercel project serves `site/`; deploy it after a release
+  (or any `site/` change) unless Vercel's Git integration is connected, in
+  which case every push to `main` deploys it.
 - **Worker deploy.** Nothing in CI deploys the Cloudflare Worker. After a
   change under `worker/`, deploy it with `npm --prefix worker run deploy`
   (`wrangler deploy`; see [`worker/README.md`](worker/README.md)).

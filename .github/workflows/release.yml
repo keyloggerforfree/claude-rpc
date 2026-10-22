@@ -250,3 +250,25 @@ jobs:
           npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  homebrew:
+    name: Nudge the Homebrew tap
+    # The tap (rar-file/homebrew-claude-rpc) bumps its formula from npm on an
+    # hourly schedule by itself; this just makes it immediate. It needs a
+    # fine-grained token with Actions: write (or Contents: write) on the tap
+    # repo in TAP_DISPATCH_TOKEN. Without the secret the step is skipped and
+    # the hourly run picks the release up.
+    needs: publish-npm
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Dispatch the tap's bump workflow
+        env:
+          GH_TOKEN: ${{ secrets.TAP_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "TAP_DISPATCH_TOKEN not set; the tap's hourly bump will pick up $GITHUB_REF_NAME."
+            exit 0
+          fi
+          gh api repos/rar-file/homebrew-claude-rpc/dispatches -f event_type=npm-published
