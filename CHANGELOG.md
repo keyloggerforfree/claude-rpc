@@ -4,7 +4,9 @@ All notable changes to claude-rpc. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
-## [1.5.3] - 2026-10-15
+## [1.5.4] - 2026-10-22
+
+1.5.3 was never published; its changes ship here.
 
 **Changed — faster**
 
