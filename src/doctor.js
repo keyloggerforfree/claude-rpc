@@ -414,7 +414,7 @@ function checkAggregate() {
       `${agg.sessions || 0} sessions · ${hours}h · refreshed ${ageMin.toFixed(0)} min ago`);
   } catch (e) {
     check('aggregate built', 'fail', `parse error: ${e.message}`,
-      'run `claude-rpc rescan` to rebuild the aggregate from scratch', 'rescan');
+      'run `claude-rpc scan --force` to rebuild the aggregate from scratch', 'rescan');
   }
 }
 

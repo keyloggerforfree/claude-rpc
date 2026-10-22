@@ -64,7 +64,18 @@ a major version. The full set:
 `profile` (`status`/`set`/`on`/`off`/`publish`/`verify`) ·
 `squad` (`create`/`join`/`leave`/`status`) · `link [code]` ·
 `doctor` (`--fix`) · `tail` (aliases `log`, `logs`) ·
-`--version`/`-V`/`-v` · `--help`/`-h`/`help`.
+`--version`/`-V`/`-v` · `--help`/`-h`/`help` (`help <command>`, `<command> --help`) ·
+`statcards [card]` (`--link`/`--png`/`--svg`/`--md`/`--html`/`--metric`/`--range`/`--copy`, `list`) ·
+`completion` (`install`/`uninstall`/`bash`/`zsh`/`fish`/`powershell`).
+
+Since 1.6 the help screen lists one name per command, and some commands gained
+a sub-command or flag form: `scan --force` (= `rescan`), `week --compare`
+(= `compare`), `projects <name>` (= `project <name>`), `private off|status`
+(= `public` / `privacy`), `pause off` (= `resume`), `logs` (= `tail`), and
+`statcards` (= `badge`, `card`, `github-stat`, `calendar`, `session-card`,
+`readme`). The older names are aliases, not deprecations: they keep working,
+with their flags, for all of 1.x. `claude-rpc __complete` is the private
+interface the completion scripts call; its output format is internal.
 
 Documented per-command flags (e.g. `badge --metric/--range/--out/--gist/--label`,
 `card --range`, `github-stat --handle/--out/--gist`, `statusline --template`,

@@ -46,7 +46,7 @@ export function pickShareNudge(agg, shown = new Set()) {
     const m = reached(streak, [3, 7, 14, 30, 50, 100, 200, 365]);
     if (m) out.push({
       key: `streak:${m}`, weight: 1000 + m,
-      message: `${m}-day streak — a personal record. Drop a live badge in your README: \`claude-rpc badge --metric streak --gist\``,
+      message: `${m}-day streak — a personal record. Drop a live badge in your README: \`claude-rpc statcards badge --metric streak --link\``,
     });
   }
 
@@ -54,7 +54,7 @@ export function pickShareNudge(agg, shown = new Set()) {
   const s = reached(sessions, [50, 100, 250, 500, 1000, 2500, 5000, 10000]);
   if (s) out.push({
     key: `sessions:${s}`, weight: s / 50,
-    message: `${fmt(s)} Claude Code sessions logged. Show it off: \`claude-rpc card --range all --out claude.svg\` (or --gist for a live one).`,
+    message: `${fmt(s)} Claude Code sessions logged. Show it off: \`claude-rpc statcards poster --range all --png\`.`,
   });
 
   const hours = Math.floor((agg.activeMs || 0) / 3_600_000);

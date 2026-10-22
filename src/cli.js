@@ -5,7 +5,7 @@ import './safe-stdio.js';
 import { readFileSync, writeFileSync, existsSync, watchFile, unlinkSync } from 'node:fs';
 import process from 'node:process';
 import { basename, join } from 'node:path';
-import { DAEMON_SCRIPT, STATE_PATH, STATE_DIR, LOG_PATH, AGGREGATE_PATH, CONFIG_PATH, IS_PACKAGED, IS_NPX, EXE_PATH } from './paths.js';
+import { DAEMON_SCRIPT, STATE_PATH, STATE_DIR, LOG_PATH, AGGREGATE_PATH, CONFIG_PATH, USER_CONFIG_DIR, IS_PACKAGED, IS_NPX, EXE_PATH } from './paths.js';
 import { VERSION } from './version.js';
 import { c, fail, tailLines, heat, sparkline, fmtDelta, topPercentile, EX_USER_ERROR, EX_BAD_STATE, EX_SYS_ERROR } from './ui.js';
 import * as lb from './leaderboard.js';
@@ -693,14 +693,14 @@ function showProjects(argv = []) {
   });
   if (ranked.length > limit) lines.push(`${c.dim}… ${ranked.length - limit} more — --limit ${ranked.length} to see all${c.reset}`);
   box('projects', lines, 76);
-  console.log(`\n  ${c.dim}drill in: ${c.reset}${c.cyan}claude-rpc project <name>${c.reset}\n`);
+  console.log(`\n  ${c.dim}drill in: ${c.reset}${c.cyan}claude-rpc projects <name>${c.reset}\n`);
 }
 
 // `project <name>` — one project's full record + its recent daily rhythm
 // (attributed per-day since scan cache v5).
 function showProject(rawName) {
   if (!rawName) {
-    console.log(`\n  Usage: ${c.cyan}claude-rpc project <name>${c.reset}  (see ${c.cyan}claude-rpc projects${c.reset})\n`);
+    console.log(`\n  Usage: ${c.cyan}claude-rpc projects <name>${c.reset}  (see ${c.cyan}claude-rpc projects${c.reset})\n`);
     process.exitCode = EX_USER_ERROR;
     return;
   }
@@ -1238,13 +1238,7 @@ function doReadme(argv) {
   }
 
   console.log('');
-  console.log(`  ${c.dim}── self-host on a GitHub gist instead (works without a profile) ──${c.reset}`);
-  console.log(`    ${c.cyan}claude-rpc badge --metric hours --gist${c.reset}   ${c.dim}# prints README markdown${c.reset}`);
-  console.log('');
-  console.log(`  ${c.dim}Shareable cards:${c.reset}`);
-  console.log(`    ${c.cyan}claude-rpc card --range year --out year.svg${c.reset}   ${c.dim}# poster${c.reset}`);
-  console.log(`    ${c.cyan}claude-rpc calendar --gist${c.reset}                    ${c.dim}# live year heatmap${c.reset}`);
-  console.log(`    ${c.cyan}claude-rpc github-stat --gist${c.reset}                 ${c.dim}# profile stat card${c.reset}`);
+  console.log(`  ${c.dim}Every card as a link, PNG or SVG, from a menu:${c.reset} ${c.cyan}claude-rpc statcards${c.reset}`);
   console.log('');
 }
 
@@ -1335,7 +1329,7 @@ async function doPrivacy() {
     for (const p of list) console.log(`    ${p === cwd ? c.cyan + '●' + c.reset : ' '} ${p}`);
   }
   console.log('');
-  console.log(`  ${c.dim}toggle:   claude-rpc private  /  claude-rpc public${c.reset}`);
+  console.log(`  ${c.dim}toggle:   claude-rpc private  /  claude-rpc private off${c.reset}`);
   console.log(`  ${c.dim}per-proj: drop a {"private": true} into .claude-rpc.json at the repo root${c.reset}`);
   console.log('');
 }
@@ -1369,7 +1363,7 @@ async function doPause(argv) {
   }
   const until = setPause(ms);
   console.log(`  ${c.green}✓${c.reset}  presence paused until ${c.cyan}${fmtClock(until)}${c.reset}`);
-  console.log(`     ${c.dim}the daemon clears the card within seconds — resume early with ${c.reset}${c.cyan}claude-rpc resume${c.reset}`);
+  console.log(`     ${c.dim}the daemon clears the card within seconds — resume early with ${c.reset}${c.cyan}claude-rpc pause off${c.reset}`);
 }
 
 async function doResume() {
@@ -2292,79 +2286,101 @@ function overview() {
   console.log('');
 }
 
-function help() {
-  const cmds = [
-    ['setup',     'Install Claude Code hooks + login autostart (Run key / LaunchAgent / systemd --user)'],
-    ['install',   'Same as setup'],
-    ['setup --link <code>', 'One-liner onboarding: install + verify via a claude-rpc.com code (+ --wrapped publishes your year)'],
-    ['uninstall', 'Remove Claude Code hooks + the login autostart entry'],
-    ['upgrade-config', 'Re-run idempotent migrations on an existing config.json'],
-    ['start',     'Start the Discord RPC daemon (detached)'],
-    ['stop',      'Stop the daemon'],
-    ['restart',   'Stop then start the daemon'],
-    ['status',    'Interactive stats TUI; --dump (or piped) prints static text'],
-    ['dump',      'Same as status --dump'],
-    ['today',     'Focus view: today\'s stats + 24h activity histogram'],
-    ['week',      'Focus view: this week, daily breakdown'],
-    ['compare',   'This week vs last week — the full side-by-side diff'],
-    ['projects',  'Every project ranked by active time (--limit N)'],
-    ['project',   'One project\'s full record + recent daily rhythm'],
-    ['usage',     'Subscription limits — session + weekly % (what /usage shows)'],
-    ['serve',     'Open a live web dashboard in your browser'],
-    ['preview',   'Show how each rotation frame renders right now'],
-    ['vars',      'Print every template variable and its live value (JSON)'],
-    ['scan',      'Incrementally scan ~/.claude/projects for all-time totals'],
-    ['rescan',    'Force re-parse every transcript (ignores cache)'],
-    ['backfill',  'Import transcripts from any folder (e.g. a backup)'],
-    ['insights',  'Auto-generated insights from your history'],
-    ['recap',     'Standup summary (yesterday by default; today|week|date, --md for markdown)'],
-    ['badge',     'Render a Shields-style SVG (--metric --range --out --gist)'],
-    ['card',      'Render a poster-style SVG summary (--range year|month|week|all)'],
-    ['github-stat', 'Render an embeddable profile stat card (--handle --out --gist)'],
-    ['statusline', 'One-line status for tmux/shell prompts (--template)'],
-    ['calendar',  'Year activity heatmap SVG (--metric hours|tokens --card --out --gist)'],
-    ['session-card', 'Recap card for the current session (--out)'],
-    ['readme',    'Paste-ready README card + badges for your profile (--raw to pipe)'],
-    ['mcp install', 'Wire the stats MCP server into Claude Code (one command)'],
-    ['mcp uninstall', 'Remove the stats MCP server from Claude Code'],
-    ['mcp',       'Run the MCP server (stdio) — exposes your stats to Claude'],
-    ['wrapped',   'Open your animated year-in-review (Claude Wrapped)'],
-    ['wrapped --publish', 'Put your Wrapped on the web at claude-rpc.com/wrapped/<handle>'],
-    ['pause',     'Snooze the Discord card globally (pause [30m|2h], default 1h)'],
-    ['pause status|off', 'Show whether presence is paused / lift a pause early'],
-    ['resume',    'Lift a pause early'],
-    ['unpause',   'Same as resume'],
-    ['export',    'Dump the aggregate as JSON, or daily rows as CSV (--csv --out)'],
-    ['private',   'Mark the current directory as private (hide from Discord)'],
-    ['public',    'Un-mark the current directory'],
-    ['privacy',   'Show resolved visibility for the current directory'],
-    ['community', 'Opt in/out of anonymous community totals (on|off|status|report)'],
-    ['profile',   'Public leaderboard identity (status|set|on|off|publish|verify)'],
-    ['squad',     'Private mini-leaderboards with friends (create|join|leave|status)'],
-    ['link',      'Link machines into one profile (mints a code; `link <code>` claims it)'],
-    ['doctor',    'Run a diagnostic checklist — common-failure triage (--fix to auto-repair)'],
-    ['tail',      'Tail the daemon log file'],
-    ['logs',      'Same as tail (also: log)'],
-    ['daemon',    'Run daemon in foreground (debug)'],
-  ];
-  const colW = cmds.reduce((m, [name]) => Math.max(m, name.length), 0);
-  console.log('');
-  console.log(`  ${c.bold}${c.magenta}◆ claude-rpc${c.reset}  ${c.dim}— Discord Rich Presence for Claude Code${c.reset}`);
-  console.log('');
-  console.log(`  ${c.dim}Commands:${c.reset}`);
-  for (const [name, desc] of cmds) {
-    console.log(`    ${c.cyan}${name.padEnd(colW)}${c.reset}  ${desc}`);
+async function help(name) {
+  const { renderHelp, renderCommandHelp } = await import('./help.js');
+  if (!name) { console.log(renderHelp()); return; }
+  const page = renderCommandHelp(name);
+  if (page) { console.log(page); return; }
+  const { suggestCommand } = await import('./commands.js');
+  const guess = suggestCommand(name);
+  fail(`no command called \`${name}\``, {
+    hint: guess ? `did you mean \`claude-rpc help ${guess}\`?` : 'claude-rpc help lists them all',
+    code: EX_USER_ERROR,
+  });
+}
+
+// `__complete <words…>` — candidates for the shell scripts in completion.js,
+// one per line. Never prints errors: a broken <Tab> must stay silent.
+async function doComplete(words) {
+  const { complete } = await import('./commands.js');
+  if (process.env.CLAUDE_RPC_COMP_CUR !== undefined) words = [...words, process.env.CLAUDE_RPC_COMP_CUR];
+  const projects = () => {
+    try { return Object.keys(JSON.parse(readFileSync(AGGREGATE_PATH, 'utf8')).projects || {}); } catch { return []; }
+  };
+  try {
+    const out = complete(words, { projects });
+    if (out.length) process.stdout.write(out.join('\n') + '\n');
+  } catch { /* stay silent */ }
+}
+
+// `completion [install|uninstall|<shell>]`
+async function doCompletion(argv) {
+  const comp = await import('./completion.js');
+  const { SHELLS } = await import('./commands.js');
+  const sub = argv[0] || '';
+  if (SHELLS.includes(sub)) { process.stdout.write(comp.scriptFor(sub)); return; }
+  const shell = (sub === 'install' && argv[1]) || comp.detectShell();
+  if (sub === 'install' && !SHELLS.includes(shell)) {
+    return fail(`unknown shell: ${shell}`, { hint: `one of: ${SHELLS.join(', ')}`, code: EX_USER_ERROR });
   }
+  const opts = { configDir: USER_CONFIG_DIR, profilePath: shell === 'powershell' ? await comp.powershellProfile() : undefined };
+  if (sub === 'install') {
+    let r;
+    try { r = comp.install(shell, opts); } catch (e) { return fail(e.message, { code: EX_SYS_ERROR }); }
+    if (!r.changed) { console.log(`  ${c.green}✓${c.reset}  tab completion already on for ${c.bold}${shell}${c.reset}`); return; }
+    console.log(`  ${c.green}✓${c.reset}  tab completion on for ${c.bold}${shell}${c.reset}  ${c.dim}${shortPath(r.rc || r.script)}${c.reset}`);
+    const reload = shell === 'fish' ? 'works in new fish sessions'
+      : shell === 'powershell' ? 'open a new PowerShell window'
+      : `open a new terminal, or: ${c.reset}${c.cyan}source ${shortPath(r.rc)}${c.reset}${c.dim}`;
+    console.log(`     ${c.dim}${reload} — then try ${c.reset}${c.cyan}claude-rpc st<Tab>${c.reset}`);
+    return;
+  }
+  if (sub === 'uninstall') {
+    const touched = comp.uninstall(opts);
+    console.log(touched.length
+      ? `  ${c.green}✓${c.reset}  tab completion removed  ${c.dim}${touched.map(shortPath).join(', ')}${c.reset}`
+      : `  ${c.cyan}·${c.reset}  tab completion wasn't installed`);
+    return;
+  }
+  if (sub) return fail(`unknown option: ${sub}`, { hint: 'claude-rpc completion [install|uninstall|bash|zsh|fish|powershell]', code: EX_USER_ERROR });
+  const on = comp.isInstalled(shell, opts);
   console.log('');
-  console.log(`  ${c.dim}First-time setup:${c.reset}`);
-  console.log(`    1. ${c.cyan}claude-rpc setup${c.reset} — wires hooks, seeds config, starts the daemon.`);
-  console.log(`    2. Open Claude Code and send a prompt — the card appears in Discord.`);
-  console.log(`    3. ${c.dim}(optional)${c.reset} Use your own Discord app: set ${c.cyan}clientId${c.reset} in ${c.cyan}config.json${c.reset} and upload art under Rich Presence → Art Assets: ${c.cyan}claude${c.reset}, ${c.cyan}working${c.reset}, ${c.cyan}idle${c.reset}, ${c.cyan}thinking${c.reset}.`);
+  console.log(`  ${c.bold}${c.magenta}◆ Tab completion${c.reset}  ${c.dim}— ${shell}${c.reset}  ${on ? `${c.green}● on${c.reset}` : `${c.yellow}○ off${c.reset}`}`);
   console.log('');
-  console.log(`  ${c.dim}Tip: ${c.reset}edit ${c.cyan}config.json${c.reset} to customize rotation frames. Run ${c.cyan}claude-rpc preview${c.reset} to see the result without Discord.`);
+  if (!on) console.log(`    ${c.cyan}claude-rpc completion install${c.reset}       ${c.dim}turn it on for ${shell}${c.reset}`);
+  else console.log(`    ${c.cyan}claude-rpc completion uninstall${c.reset}     ${c.dim}turn it off${c.reset}`);
+  console.log(`    ${c.cyan}claude-rpc completion <shell>${c.reset}       ${c.dim}print the script (${SHELLS.join(', ')})${c.reset}`);
   console.log('');
-  console.log(`  ${c.dim}Exit codes:${c.reset} ${c.dim}0 ok · 1 user error · 2 system error · 3 wrong state${c.reset}`);
-  console.log('');
+}
+
+// Offer tab completion once during a first setup, on a terminal only.
+async function setupCompletionOffer() {
+  if (!process.stdin.isTTY || !process.stdout.isTTY || process.env.CLAUDE_RPC_NO_COMPLETION) return;
+  const comp = await import('./completion.js');
+  const shell = comp.detectShell();
+  const profilePath = shell === 'powershell' ? await comp.powershellProfile() : undefined;
+  const opts = { configDir: USER_CONFIG_DIR, profilePath };
+  if (shell === 'powershell' && !profilePath) return;
+  if (comp.isInstalled(shell, opts)) return;
+  const answer = (await prompt(`  tab completion for ${shell}? ${c.dim}[Y/n]${c.reset} `)).trim().toLowerCase();
+  if (answer && answer !== 'y' && answer !== 'yes') return;
+  try {
+    const r = comp.install(shell, opts);
+    console.log(`  ${c.green}✓${c.reset}  ${'tab completion'.padEnd(16)}${c.dim}${shell} · ${shortPath(r.rc || r.script)} (new terminals)${c.reset}`);
+  } catch (e) {
+    console.log(`  ${c.yellow}!${c.reset}  ${'tab completion'.padEnd(16)}${c.dim}${e.message}${c.reset}`);
+  }
+}
+
+async function doStatcards(argv) {
+  const { runStatcards } = await import('./statcards.js');
+  await runStatcards(argv, {
+    config: loadConfig(),
+    aggregate: () => aggregateOr('render'),
+    liveVars: () => liveVars().vars,
+    prompt,
+    enableProfile: () => profileEnable(true),
+  });
 }
 
 // Packaged exe: `claude-rpc.exe` with no args → first-run install + start.
@@ -2395,7 +2411,12 @@ process.on('unhandledRejection', (e) => {
   // Fast-exit commands touch none of the core graph (they import their own
   // module, if any); daemon control needs only ensure-daemon. Everything else
   // loads the core once up front, so its bindings are set for every handler.
-  const FAST_PATHS = new Set(['--version', '-V', '-v', '--help', '-h', 'help', 'hook', 'mcp', 'daemon', 'serve', 'wrapped', 'scan-worker', 'tail', 'logs', 'log', 'pause', 'resume', 'unpause']);
+  const FAST_PATHS = new Set(['--version', '-V', '-v', '--help', '-h', 'help', '__complete', 'hook', 'mcp', 'daemon', 'serve', 'wrapped', 'scan-worker', 'tail', 'logs', 'log', 'pause', 'resume', 'unpause']);
+  // `<command> --help` → that command's page (before it runs at all).
+  if (cmd && (args.includes('--help') || args.includes('-h')) && !['hook', 'scan-worker', '__complete'].includes(cmd)) {
+    const { findCommand } = await import('./commands.js');
+    if (findCommand(cmd)) { await help(cmd); return; }
+  }
   if (['start', 'stop', 'restart'].includes(cmd)) await loadDaemonCtl();
   else if (!FAST_PATHS.has(cmd)) await loadCore();
   switch (cmd) {
@@ -2404,7 +2425,10 @@ process.on('unhandledRejection', (e) => {
     case '-v':        console.log(`claude-rpc ${VERSION}`); break;
     case '--help':
     case '-h':
-    case 'help':      help(); break;
+    case 'help':      await help(cmd === 'help' ? args[0] : undefined); break;
+    case '__complete': await doComplete(args); break;
+    case 'completion': await doCompletion(args); break;
+    case 'statcards': await doStatcards(args); break;
     // `setup` and `install` are aliases as of v0.7: both register hooks AND
     // the login autostart entry (Windows Run key, macOS LaunchAgent, Linux
     // systemd --user unit). Older behavior split them (setup = no startup,
@@ -2489,11 +2513,17 @@ process.on('unhandledRejection', (e) => {
         // Optional GitHub connect — one explicit y/N, asked at most once ever.
         // The --link path above IS a connect, so it never double-asks.
         if (!linkCode) await setupGhConnect();
+        if (changed) await setupCompletionOffer();
       }
       setupOutro(target, changed, cli);
       break;
     }
-    case 'uninstall': await (await import('./install.js')).uninstall(); break;
+    case 'uninstall': {
+      const { uninstall: completionOff } = await import('./completion.js');
+      try { completionOff({ configDir: USER_CONFIG_DIR, profilePath: process.platform === 'win32' ? await (await import('./completion.js')).powershellProfile() : undefined }); } catch { /* best-effort */ }
+      await (await import('./install.js')).uninstall();
+      break;
+    }
     case 'upgrade-config':
       if (!(await import('./install.js')).migrateConfig()) console.log(`  ${c.green}✓${c.reset}  config already current — nothing to migrate`);
       break;
@@ -2508,15 +2538,20 @@ process.on('unhandledRejection', (e) => {
     }
     case 'dump':      await showStatus(); break;
     case 'today':     await showToday(); break;
-    case 'week':      await showWeek(); break;
-    case 'projects':  showProjects(args); break;
+    case 'week':      if (args.includes('--compare')) showCompare(); else await showWeek(); break;
+    case 'projects': {
+      // `projects <name>` drills into one project (was `project <name>`).
+      const name = args.find((a, i) => !a.startsWith('-') && args[i - 1] !== '--limit');
+      if (name) showProject(name); else showProjects(args);
+      break;
+    }
     case 'project':   showProject(args[0]); break;
     case 'compare':   showCompare(); break;
     case 'usage':     await showUsage(); break;
     case 'serve':     await import('./server/index.js'); break;
     case 'preview':   showPreview(); break;
     case 'vars':      dumpVars(); break;
-    case 'scan':      doScan(false); break;
+    case 'scan':      doScan(args.includes('--force') || args.includes('-f')); break;
     case 'rescan':    doScan(true); break;
     case 'backfill':  doBackfill(args); break;
     case 'insights':  await showInsights(); break;
@@ -2542,7 +2577,14 @@ process.on('unhandledRejection', (e) => {
     case 'resume':
     case 'unpause':   await doResume(); break;
     case 'export':    await doExport(args); break;
-    case 'private':   await doPrivate(); break;
+    case 'private': {
+      const sub = args[0] || 'on';
+      if (sub === 'on') await doPrivate();
+      else if (sub === 'off') await doPublic();
+      else if (sub === 'status') await doPrivacy();
+      else fail(`unknown option: ${sub}`, { hint: 'claude-rpc private [on|off|status]', code: EX_USER_ERROR });
+      break;
+    }
     case 'public':    await doPublic(); break;
     case 'privacy':   await doPrivacy(); break;
     case 'community': await doCommunity(args); break;
@@ -2652,9 +2694,11 @@ process.on('unhandledRejection', (e) => {
           : IS_NPX ? `npx claude-rpc@latest ${cmd}`
           : /[\\/]Cellar[\\/]/.test(DAEMON_SCRIPT) ? 'brew upgrade claude-rpc'
           : 'npm install -g claude-rpc@latest';
+        const { suggestCommand } = await import('./commands.js');
+        const guess = suggestCommand(cmd);
         fail(`unknown command: ${cmd}`, {
-          hint: [
-            'run `claude-rpc --help` for the full command list',
+          hint: guess ? `did you mean \`claude-rpc ${guess}\`?` : [
+            'run `claude-rpc help` for the full command list',
             `this install is v${VERSION} — if the docs mention \`${cmd}\`, update first: ${update}`,
           ],
           code: EX_USER_ERROR,

@@ -3,7 +3,7 @@
 // what your Claude Code subscription actually charges. Treat the resulting
 // `costEstimate` as a usage-weighted rough order of magnitude, not a bill.
 //
-// To customize: edit this file and run `claude-rpc rescan`.
+// To customize: edit this file and run `claude-rpc scan --force`.
 
 const PRICING = {
   // Fable family — Anthropic's frontier tier above Opus. 5.1 cut cache reads 4x.

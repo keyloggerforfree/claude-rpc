@@ -147,17 +147,24 @@ test('cli: `wrapped --publish --year` validates the value; `--year=N` works', as
   assert.match(spaced.out, /Claude Wrapped 2025/);
 });
 
-test('cli: help lists every user-facing command, including aliases', async (t) => {
+test('cli: help lists the commands; old names still get a page', async (t) => {
   const dir = sandbox();
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const { code, out } = await runCli(dir, ['help']);
   assert.equal(code, 0);
-  const names = out.split('\n').map((l) => l.trim().split(/\s{2,}/)[0]);
-  for (const name of ['setup', 'install', 'status', 'dump', 'vars', 'pause', 'pause status|off', 'resume', 'unpause', 'tail', 'logs']) {
+  const names = out.split('\n').map((l) => l.trim().split(/\s+/)[0]);
+  for (const name of ['setup', 'status', 'statcards', 'completion', 'vars', 'pause', 'private', 'logs', 'doctor']) {
     assert.ok(names.includes(name), `help lists \`${name}\``);
   }
-  assert.doesNotMatch(out, /Windows startup entry/, 'autostart is cross-platform now');
-  assert.match(out, /LaunchAgent/);
+  for (const old of ['install', 'dump', 'resume', 'rescan', 'tail']) {
+    assert.ok(!names.includes(old), `help no longer lists the alias \`${old}\``);
+  }
+  const page = await runCli(dir, ['resume', '--help']);
+  assert.equal(page.code, 0);
+  assert.match(page.out, /pause off/);
+  const typo = await runCli(dir, ['stauts']);
+  assert.equal(typo.code, 1);
+  assert.match(typo.err + typo.out, /did you mean `claude-rpc status`/);
 });
 
 test('cli: projects/project/compare run clean with no aggregate (v1.2)', async (t) => {

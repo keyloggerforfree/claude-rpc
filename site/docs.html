@@ -205,6 +205,10 @@
 /plugin install claude-rpc@claude-rpc</pre></div>
           <p class="small">typed inside Claude Code. a thin bootstrapper: on the first session it runs <code>npx claude-rpc@latest setup</code> for you, then stays out of the way. macOS / Linux / WSL. on Windows use the exe above.</p>
 
+          <h3>tab completion</h3>
+          <div class="code" data-copy="claude-rpc completion install"><button class="copy" type="button">copy</button><pre><span class="ps1">$</span> claude-rpc completion install   <span class="cmt"># bash · zsh · fish · PowerShell</span></pre></div>
+          <p class="small">setup offers it too. then <code>claude-rpc re</code>&lt;Tab&gt; offers <code>recap</code> / <code>restart</code>, <code>scan --</code>&lt;Tab&gt; offers <code>--force</code>, and flag values, project names and files complete as well. <code>claude-rpc help &lt;command&gt;</code> shows any command's options and examples.</p>
+
           <h3>VS Code</h3>
           <p>The <a href="https://marketplace.visualstudio.com/items?itemName=rarfile.claude-rpc-presence">Claude RPC Presence extension</a> (<code>rarfile.claude-rpc-presence</code>) puts your live session in the VS Code status bar. It reads the same local state the daemon writes, so install claude-rpc itself first with any path above.</p>
         </section>
@@ -308,8 +312,8 @@ claude-rpc preview"><button class="copy" type="button">copy</button><pre><span c
 
           <h3>per directory</h3>
           <div class="code" data-copy="claude-rpc private"><button class="copy" type="button">copy</button><pre><span class="ps1">$</span> claude-rpc private   <span class="cmt"># hide the current project from the card</span>
-<span class="ps1">$</span> claude-rpc public    <span class="cmt"># un-hide it</span>
-<span class="ps1">$</span> claude-rpc privacy   <span class="cmt"># show how this directory resolves, and why</span></pre></div>
+<span class="ps1">$</span> claude-rpc private off      <span class="cmt"># un-hide it</span>
+<span class="ps1">$</span> claude-rpc private status   <span class="cmt"># show how this directory resolves, and why</span></pre></div>
           <p class="small">or drop a <code>.claude-rpc.json</code> at the project root: <code>{"private": true}</code>, <code>{"visibility": "name-only"}</code>, or <code>{"projectName": "redacted"}</code> to show an alias instead.</p>
 
           <h3>by pattern, globally</h3>
@@ -320,7 +324,7 @@ claude-rpc preview"><button class="copy" type="button">copy</button><pre><span c
 
           <h3>screen-sharing</h3>
           <div class="code" data-copy="claude-rpc pause 30m"><button class="copy" type="button">copy</button><pre><span class="ps1">$</span> claude-rpc pause 30m   <span class="cmt"># snooze the card (also 2h, 1h30m; bare pause = 1h)</span>
-<span class="ps1">$</span> claude-rpc resume      <span class="cmt"># lift it early</span></pre></div>
+<span class="ps1">$</span> claude-rpc pause off   <span class="cmt"># lift it early</span></pre></div>
 
           <h3>telemetry</h3>
           <div class="code" data-copy="claude-rpc community off"><button class="copy" type="button">copy</button><pre><span class="ps1">$</span> claude-rpc community off   <span class="cmt"># stop reporting anonymous totals</span></pre></div>
@@ -343,7 +347,7 @@ claude-rpc preview"><button class="copy" type="button">copy</button><pre><span c
 [![Claude Code hours](https://claude-rpc-totals.claude-rpc.workers.dev/badge/&lt;you&gt;.svg?metric=hours)](https://claude-rpc.com/?ref=badge)"><span class="label">paste-ready markdown</span><button class="copy" type="button">copy</button><pre>[![Claude Code stats](https://claude-rpc-totals.claude-rpc.workers.dev/stats/&lt;you&gt;.svg)](https://claude-rpc.com/u/&lt;you&gt;)
 
 [![Claude Code hours](https://claude-rpc-totals.claude-rpc.workers.dev/badge/&lt;you&gt;.svg?metric=hours)](https://claude-rpc.com/?ref=badge)</pre></div>
-          <p class="small">badge <code>metric=</code> is one of <code>tokens · sessions · hours · streak</code> (optional <code>&amp;label=</code> to retitle). <code>claude-rpc readme</code> prints the whole block filled in with your handle, and your profile page at <code>/u/&lt;you&gt;</code> has one-click copy. Full route reference: <a href="https://github.com/rar-file/claude-rpc/blob/main/docs/WORKER-API.md">WORKER-API.md</a>.</p>
+          <p class="small">badge <code>metric=</code> is one of <code>tokens · sessions · hours · streak</code> (optional <code>&amp;label=</code> to retitle). <code>claude-rpc statcards</code> picks a card from a menu and prints the link, Markdown and an <code>&lt;img&gt;</code> tag filled in with your handle (or saves a PNG / SVG, no profile needed), and your profile page at <code>/u/&lt;you&gt;</code> has one-click copy. Full route reference: <a href="https://github.com/rar-file/claude-rpc/blob/main/docs/WORKER-API.md">WORKER-API.md</a>.</p>
 
           <h3>squads</h3>
           <div class="code" data-copy='claude-rpc squad create "the night shift"'><button class="copy" type="button">copy</button><pre><span class="ps1">$</span> claude-rpc squad create "the night shift"   <span class="cmt"># private mini-board; friends join with the invite code</span></pre></div>
@@ -377,7 +381,7 @@ claude-rpc preview"><button class="copy" type="button">copy</button><pre><span c
               <p class="sym">Card is frozen or showing stale data</p>
               <p class="why"><b>Cause:</b> usually a daemon that lost its Discord connection or is running an old version after an update.</p>
               <div class="code" data-copy="claude-rpc restart"><button class="copy" type="button">copy</button><pre><span class="ps1">$</span> claude-rpc restart
-<span class="ps1">$</span> claude-rpc tail      <span class="cmt"># watch what the daemon is actually doing</span></pre></div>
+<span class="ps1">$</span> claude-rpc logs      <span class="cmt"># watch what the daemon is actually doing</span></pre></div>
             </div>
 
             <div class="fault">
@@ -396,11 +400,11 @@ claude-rpc preview"><button class="copy" type="button">copy</button><pre><span c
             <div class="fault">
               <p class="sym">Stats look wrong or missing</p>
               <p class="why"><b>Cause:</b> a stale or corrupted aggregate: the lifetime numbers are built by scanning your Claude Code transcripts, and the cache can lag a version bump.</p>
-              <div class="code" data-copy="claude-rpc rescan"><button class="copy" type="button">copy</button><pre><span class="ps1">$</span> claude-rpc rescan    <span class="cmt"># force a full re-parse of ~/.claude/projects</span></pre></div>
+              <div class="code" data-copy="claude-rpc scan --force"><button class="copy" type="button">copy</button><pre><span class="ps1">$</span> claude-rpc scan --force   <span class="cmt"># force a full re-parse of ~/.claude/projects</span></pre></div>
             </div>
           </div>
 
-          <div class="note">Still stuck? <code>claude-rpc tail</code> shows the daemon log live, and <a href="https://github.com/rar-file/claude-rpc/issues">issues on GitHub</a> get read by the person who wrote the code.</div>
+          <div class="note">Still stuck? <code>claude-rpc logs</code> shows the daemon log live, and <a href="https://github.com/rar-file/claude-rpc/issues">issues on GitHub</a> get read by the person who wrote the code.</div>
         </section>
 
         <!-- ──────────────────────────────── 7 · UNINSTALL -->

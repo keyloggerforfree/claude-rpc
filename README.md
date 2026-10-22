@@ -142,12 +142,17 @@ The web dashboard pushes updates via SSE; the TUI refreshes on a 3-second tick.
 
 ### beyond your machine
 
-Shields-style badges and a poster-style summary card you can paste into a README or a Discord message. The fastest path is one command:
+Stat cards and badges for a README, a site or a Discord message, all from one command. Run it bare for a menu: pick a card, then a **live link** (paste once, it refreshes itself), a **PNG** or an **SVG**:
 
 ```sh
-claude-rpc readme                 # prints paste-ready README badge markdown
-claude-rpc readme --raw | pbcopy  # straight to your clipboard
+claude-rpc statcards                              # menu: card → link / PNG / SVG
+claude-rpc statcards stats --link --md | pbcopy   # README markdown, straight to the clipboard
+claude-rpc statcards poster --png                 # ./claude-poster.png, 2× for Discord / X
+claude-rpc statcards badge --metric streak --svg  # ./claude-badge-streak.svg
+claude-rpc statcards list                         # every card and where it can go
 ```
+
+Cards: `stats` (totals + year heatmap), `profile`, `badge`, `heatmap`, `poster`, `session`, `wrapped`. PNGs are drawn by whatever the machine already has (rsvg-convert, or Chrome / Edge / Brave / Chromium headless; Edge ships with Windows), so there is still nothing to install. The link option prints the URL, Markdown and an `<img>` tag, and copies the Markdown.
 
 **Live stats + year heatmap, paste once.** With a public profile (`claude-rpc profile set --handle <you> && claude-rpc profile on`), the community worker serves an always-current stats card with your last 12 months as a heatmap. You don't need `gh` or a gist, and there's nothing to re-run:
 
@@ -171,26 +176,15 @@ The smaller card and badges are still there:
 
 The card shows tokens, sessions, active hours and streak; badge `metric=` is one of `tokens · sessions · hours · streak` (optional `&label=` to retitle). Both refresh themselves as the daemon flushes your profile (~every 30 min). Your profile page at `/u/<you>` has a one-click "copy" for the whole block.
 
-Prefer to render locally? `badge`/`card`/`calendar`/`github-stat` all write SVG, and `--gist` self-hosts a live one:
-
-```sh
-claude-rpc badge --metric hours  --range 7d   --out claude-hours.svg
-claude-rpc badge --metric streak              --out claude-streak.svg
-claude-rpc badge --metric hours  --gist                                     # publish to a gist (live README badge)
-claude-rpc card  --range year                 --out year-on-claude.svg
-claude-rpc calendar --metric tokens           --out heatmap.svg             # year heatmap (hours by default)
-claude-rpc calendar --card                    --out stats.svg               # stats + heatmap, offline
-```
+No public profile? Every card except `wrapped` also renders offline from your local stats, as PNG or SVG (`statcards <card> --png` / `--svg`). The older one-card commands (`badge`, `card`, `calendar`, `github-stat`, `session-card`, `readme`) still work, including `--gist`.
 
 <div align="center">
   <img src="site/examples/week-on-claude.svg"  width="270" alt="Week-on-claude summary card" />
   <img src="site/examples/month-on-claude.svg" width="270" alt="Month-on-claude summary card" />
   <img src="site/examples/year-on-claude.svg"  width="270" alt="Year-on-claude summary card — hours, prompts, tokens, lines, cost, daily activity strip" />
   <br/>
-  <sub><code>card --range week · month · year</code> (also <code>all</code>) — live at <code>/api/card.svg</code> while <code>claude-rpc serve</code> is running</sub>
+  <sub><code>statcards poster --range week · month · year</code> (also <code>all</code>) — live at <code>/api/card.svg</code> while <code>claude-rpc serve</code> is running</sub>
 </div>
-
-`badge --gist` writes the SVG to your own GitHub gist (creates one on first run, updates it after — id remembered in `config.json`). The URL printed back is README-ready and updates every time you re-run the command. Uses `gh` if available, else `GH_TOKEN` with `gist` scope.
 
 Live equivalents while `claude-rpc serve` is running (the local dashboard server — the daemon itself serves no HTTP):
 
@@ -253,9 +247,9 @@ Per-project, runtime, or auto-detected — whichever fits how you work.
 Or from the command line, in any project:
 
 ```sh
-claude-rpc private        # add cwd to ~/.claude-rpc/private-list.json
-claude-rpc public         # remove cwd
-claude-rpc privacy        # show the resolved visibility for the current dir
+claude-rpc private          # hide this folder (adds it to ~/.claude-rpc/private-list.json)
+claude-rpc private off      # show it again
+claude-rpc private status   # what Discord sees for this folder, and why
 ```
 
 Or globally, in `config.json`:
@@ -306,7 +300,9 @@ It's a thin bootstrapper — on the first session it just runs `npx claude-rpc@l
 
 ## commands
 
-`claude-rpc --help` lists them all — and after `setup` you rarely need any.
+`claude-rpc help` lists them all, grouped; `claude-rpc help <command>` (or `<command> --help`) shows one command's options and examples. After `setup` you rarely need any.
+
+**Tab completion:** `claude-rpc completion install` turns it on for bash, zsh, fish or PowerShell (setup offers it too). `claude-rpc re<Tab>` → `recap` / `restart`, `claude-rpc scan --<Tab>` → `--force`, and flag values, project names and files complete as well. A typo gets a "did you mean".
 
 <details>
 <summary><b>full command reference</b></summary>
@@ -315,42 +311,46 @@ It's a thin bootstrapper — on the first session it just runs `npx claude-rpc@l
 
 | Command          | What it does |
 | ---------------- | ------------ |
-| `setup` (or `install`) | Install Claude Code hooks + login autostart, seed config, start the daemon (test-fires one synthetic SessionStart to prove the pipe works). `--link <code>` also links this machine to your verified profile |
-| `uninstall`      | Remove Claude Code hooks + the login-autostart entry (keeps your data) |
-| `upgrade-config` | Re-run idempotent migrations on `config.json` |
-| `start` / `stop` / `restart` | Lifecycle for the detached daemon |
-| `status`         | Interactive TUI — heatmap, hour histogram, leaderboards (`--dump`, or `dump`, for plain output) |
-| `today` / `week` | Focused views (today's stats, weekday breakdown) |
-| `compare`        | This week vs last week, side by side |
-| `projects` / `project <name>` | Every project ranked by active time (`--limit N`) / one project's full record + recent daily rhythm |
-| `usage`          | Subscription limits — session + weekly %, the same numbers `/usage` shows |
-| `serve`          | Open the local web dashboard (port 47474) |
-| `preview`        | Render every rotation frame against real state |
-| `vars`           | Dump the full template-var list as JSON |
-| `scan` / `rescan`| Incremental / forced re-parse of `~/.claude/projects` |
-| `backfill <dir>` | Import transcripts from any folder (backup, other machine) |
-| `insights`       | Print 3–5 auto-generated lines about your week |
-| `recap`          | Standup summary — yesterday's work, paste-ready (`today\|week\|date`, `--md`) |
-| `export`         | Dump the aggregate as JSON, or daily rows as CSV (`--csv` `--out`) |
-| `badge`          | Shields-style SVG (`--metric` `--range` `--out` `--gist`) |
-| `card`           | Poster-style SVG (`--range year\|month\|week\|all`) |
-| `github-stat`    | Embeddable profile stat card (`--handle` `--out` `--gist`) |
-| `calendar`       | Year activity heatmap SVG (`--metric hours\|tokens` `--card` `--out` `--gist`) |
-| `session-card`   | Recap card for the current session (`--out`) |
-| `readme`         | Paste-ready README badge markdown for your profile (`--raw` to pipe) |
+| **Get started** | |
+| `setup`          | Install Claude Code hooks + login autostart, seed config, start the daemon. `--link <code>` also links this machine to your verified profile (`--wrapped` publishes your year too) |
+| `completion`     | Tab completion: `install`, `uninstall`, or print the `bash` / `zsh` / `fish` / `powershell` script |
+| `uninstall`      | Remove hooks, login autostart, PATH entry and tab completion (keeps your data) |
+| **Your stats** | |
+| `status`         | Interactive TUI: heatmap, hour histogram, leaderboards (`--dump` for plain output) |
+| `today`          | Today's stats + when in the day you code |
+| `week`           | This week day by day; `--compare` puts it next to last week |
+| `projects [name]`| Every project ranked by active time (`--limit N`), or one project's full record + recent daily rhythm |
+| `usage`          | Subscription limits: session + weekly %, the same numbers `/usage` shows |
+| `recap`          | Standup summary, yesterday by default (`today\|week\|YYYY-MM-DD`, `--md`, `--json`) |
+| `insights`       | 3–5 auto-generated lines about your history |
+| `wrapped`        | Your animated year in review; `--publish` puts it on `claude-rpc.com/wrapped/<handle>` |
+| `serve`          | The local web dashboard (port 47474) |
+| `export`         | The aggregate as JSON, or daily rows as CSV (`--csv` `--out`) |
+| **Share** | |
+| `statcards [card]` | Cards and badges as a live link, PNG or SVG: `stats` `profile` `badge` `heatmap` `poster` `session` `wrapped` (`--link` `--png [file]` `--svg [file]` `--md` `--html` `--metric` `--range` `--copy`; bare = menu) |
 | `statusline`     | One-line status for tmux/shell prompts (`--template`) |
-| `mcp install` / `mcp uninstall` | Wire / remove the stats MCP server in Claude Code (one command) |
-| `mcp`            | Run the MCP server (stdio) for Claude Code |
-| `wrapped`        | Open your animated year-in-review (Claude Wrapped); `--publish` puts it on `claude-rpc.com/wrapped/<handle>` |
-| `pause` / `resume` | Snooze the Discord card everywhere (`pause [30m\|2h]`, default 1h; `pause status`, `pause off`); `unpause` = `resume` |
-| `private` / `public` / `privacy` | Per-cwd visibility toggles + status |
-| `community`      | Anonymous community totals, on by default for fresh installs — `status` \| `off` \| `on` \| `report` |
-| `profile`        | Opt-in public leaderboard profile — `status` \| `set` \| `on` \| `off` \| `publish` \| `verify` |
-| `squad`          | Private mini-leaderboards with friends — `status` \| `create <name>` \| `join <code>` \| `leave [id]` |
-| `link`           | One profile across machines: `link` mints a code on your verified machine, `link <code>` claims it on the new one |
+| `mcp`            | The stats MCP server (stdio); `mcp install` / `mcp uninstall` wire it into Claude Code |
+| **Privacy** | |
+| `private [on\|off\|status]` | Hide this folder from Discord, show it again, or see how it resolves |
+| `pause [30m\|2h\|off\|status]` | Hide the card everywhere for a while (default 1h) |
+| **Online** | |
+| `profile`        | Opt-in public leaderboard profile: `status` \| `set` \| `on` \| `off` \| `publish` \| `verify` |
+| `squad`          | Private mini-leaderboards with friends: `status` \| `create <name>` \| `join <code>` \| `leave [id]` |
+| `link [code]`    | One profile across machines: `link` mints a code on your verified machine, `link <code>` claims it on the new one |
+| `community`      | Anonymous community totals, on by default for fresh installs: `status` \| `off` \| `on` \| `report` |
+| **Daemon** | |
+| `start` / `stop` / `restart` | Lifecycle for the detached daemon |
+| `logs`           | Follow the daemon log |
+| **Troubleshoot** | |
 | `doctor`         | Diagnostic checklist with one-line fix hints (`--fix` to auto-repair) |
-| `tail` / `logs` / `log` | Tail the daemon log |
+| `scan`           | Re-count your history from `~/.claude/projects` (`--force` re-parses everything) |
+| `backfill <dir>` | Import transcripts from any folder (backup, other machine) |
+| `preview`        | Render every rotation frame against real state |
+| `vars`           | The full template-variable list as JSON |
+| `upgrade-config` | Re-run idempotent migrations on `config.json` |
 | `daemon`         | Run the daemon in the foreground (debugging) |
+
+Older names still work and always will within 1.x: `install` (setup), `dump` (status --dump), `compare` (week --compare), `project <name>` (projects <name>), `rescan` (scan --force), `resume` / `unpause` (pause off), `public` (private off), `privacy` (private status), `tail` / `log` (logs), and `badge`, `card`, `github-stat`, `calendar`, `session-card`, `readme` (statcards).
 
 Exit codes: `0` ok · `1` user error · `2` system error · `3` wrong state. `--version` and `--help` work as expected.
 
@@ -395,9 +395,9 @@ rm -rf ~/.claude-rpc        # stats; plus the per-OS config dir if you want it g
 
 <br/>
 
-- **Discord doesn't show anything.** Discord *desktop* must be running. The browser client doesn't expose the local IPC bridge. `claude-rpc tail` shows what the daemon is actually doing.
+- **Discord doesn't show anything.** Discord *desktop* must be running. The browser client doesn't expose the local IPC bridge. `claude-rpc logs` shows what the daemon is actually doing.
 - **Hooks don't fire.** `claude-rpc setup` re-registers them and now test-fires a synthetic `SessionStart` end-to-end, so a broken hook command surfaces immediately. Restart Claude Code afterwards so it re-reads its hook config.
-- **Config error.** Bad JSON in `config.json` no longer crashes anything — the daemon logs one line and falls back to baked defaults. `claude-rpc tail` shows the parse error verbatim.
+- **Config error.** Bad JSON in `config.json` no longer crashes anything — the daemon logs one line and falls back to baked defaults. `claude-rpc logs` shows the parse error verbatim.
 - **Old binary path baked into hooks.** Common after manual exe replacement. `claude-rpc setup` rewrites hook entries to point at the canonical install location.
 
 </details>

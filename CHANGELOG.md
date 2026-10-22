@@ -4,6 +4,19 @@ All notable changes to claude-rpc. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+**Added**
+
+- **Tab completion** for bash, zsh, fish and PowerShell: `claude-rpc completion install` (setup offers it once). Commands, sub-commands, flags, flag values, project names and file paths complete; zsh, fish and PowerShell show a one-line description next to each. The scripts ask claude-rpc for candidates, so new commands complete without reinstalling. `uninstall` removes it.
+- **`claude-rpc statcards`**: every shareable card in one place. Run it bare for a menu (pick a card, then a live link, PNG or SVG), or script it: `statcards stats --link --md`, `statcards poster --png`, `statcards badge --metric streak --svg`. Live links print the URL, Markdown and an `<img>` tag and copy the Markdown to your clipboard; PNGs are 2× and drawn with whatever the machine already has (rsvg-convert, or Chrome / Edge / Brave / Chromium headless), so there is still nothing to install.
+- **`claude-rpc help <command>`** (or `<command> --help`): options, choices and examples for one command.
+- A mistyped command gets a "did you mean" (`claude-rpc stauts` → `status`).
+
+**Changed**
+
+- **`claude-rpc help` is rebuilt**: grouped into Get started / Your stats / Share / Privacy / Online / Daemon / Troubleshoot, one line per command, down from 52 rows.
+- Fewer names to remember: `scan --force`, `week --compare`, `projects <name>`, `private off` / `private status`, `pause off`, `logs` and `statcards` are now the documented forms. `rescan`, `compare`, `project`, `public`, `privacy`, `resume`, `unpause`, `tail`, `log`, `dump`, `install`, `badge`, `card`, `github-stat`, `calendar`, `session-card` and `readme` all still work as before.
+- **Releases are one command** (`npm run release -- minor --note "…"`): it bumps every version string, rolls the changelog, tests, tags and pushes, and CI does the rest. The Homebrew tap now updates itself from npm.
+
 ## [1.5.4] - 2026-10-22
 
 1.5.3 was never published; its changes ship here.
