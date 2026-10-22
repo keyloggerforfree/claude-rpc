@@ -849,8 +849,8 @@ Polish pass. Install once, never think about it again.
 
 - 81 → 134 tests. New coverage for `format.humanModel / humanTool / humanProject / fmtNum / fmtDuration / fmtHours / plural`, `languages.languageOf`, `insights.generateInsights`, `scanner.dayKey / weekKey / hourKey`, `state.readState / writeState / updateState / resetState`, `server/api.windowedAggregate / rangeToDays`, `server/page.buildHtml`, and a live route-walker over the dashboard. Every public `src/*.js` export is exercised at least once.
 
-[Unreleased]: https://github.com/rar-file/claude-rpc/compare/v1.5.3...HEAD
-[1.5.3]: https://github.com/rar-file/claude-rpc/compare/v1.5.2...v1.5.3
+[Unreleased]: https://github.com/rar-file/claude-rpc/compare/v1.5.4...HEAD
+[1.5.4]: https://github.com/rar-file/claude-rpc/compare/v1.5.2...v1.5.4
 [1.5.2]: https://github.com/rar-file/claude-rpc/compare/v1.5.1...v1.5.2
 [1.5.1]: https://github.com/rar-file/claude-rpc/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/rar-file/claude-rpc/compare/v1.4.3...v1.5.0
