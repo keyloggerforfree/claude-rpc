@@ -474,6 +474,45 @@ test('working hover text defaults to {workLabel} and renders without a dangling 
   assert.equal(fillTemplate(tpl, vars), 'Running a command');
 });
 
+// ── usage frame: each limit with its own reset ─────────────────────────
+function usageAt({ sessionPct = 5, weeklyPct = 1, sessionInMs, weeklyDays }) {
+  const now = new Date();
+  // Local clock values, so the expected "4:09pm" holds in any timezone.
+  const sess = sessionInMs != null ? new Date(now.getTime() + sessionInMs)
+    : new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 16, 9);
+  const week = new Date(now.getFullYear(), now.getMonth(), now.getDate() + (weeklyDays ?? 7), 8, 0);
+  return { sessionPct, weeklyPct, sessionResetsAt: sess.toISOString(), weeklyResetsAt: week.toISOString() };
+}
+
+test('buildVars: each usage limit carries its own reset, not the other one\'s', () => {
+  const vars = buildVars(baseState({ usage: usageAt({}) }), {}, {});
+  const day = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(Date.now() + 7 * 86_400_000).getDay()];
+  assert.equal(vars.usageWeeklyLabel, `1% weekly · resets next ${day}`, 'a week out reads "next"');
+  assert.equal(vars.usageSessionLabel, 'session 5% · resets 4:09pm');
+});
+
+test('buildVars: a reset already in the past is left off', () => {
+  const vars = buildVars(baseState({ usage: usageAt({ sessionInMs: -60_000, weeklyDays: -1 }) }), {}, {});
+  assert.equal(vars.usageWeeklyLabel, '1% weekly');
+  assert.equal(vars.usageSessionLabel, 'session 5%');
+});
+
+test('buildVars: no usage data → empty labels (the frame is gated off)', () => {
+  const vars = buildVars(baseState({}), {}, {});
+  assert.equal(vars.usageWeeklyLabel, '');
+  assert.equal(vars.usageSessionLabel, '');
+});
+
+test('the default usage frame renders the weekly reset on the weekly line', () => {
+  const frame = DEFAULT_CONFIG.presence.byStatus.idle.rotation.find((f) => /usageWeeklyLabel/.test(f.details));
+  assert.ok(frame, 'idle rotation has the usage frame');
+  const vars = buildVars(baseState({ usage: usageAt({ weeklyDays: 7 }) }), {}, {});
+  assert.match(fillTemplate(frame.details, vars), /^Usage · 1% weekly · resets next \w+$/);
+  assert.equal(fillTemplate(frame.state, vars), 'session 5% · resets 4:09pm');
+  assert.ok(!DEFAULT_CONFIG.presence.byStatus.working.rotation.some((f) => f.state === '{usageStateLabel}'),
+    'no default frame still pairs the weekly reset with the session %');
+});
+
 test('buildVars: token total includes cache', () => {
   const s = baseState({
     tokens: { input: 100, output: 50, cacheRead: 20, cacheWrite: 5 },

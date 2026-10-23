@@ -142,7 +142,9 @@ export function fmtResetTime(iso) {
   return m ? `${h}:${String(m).padStart(2, '0')}${ap}` : `${h}${ap}`;
 }
 
-// "today" / "tomorrow" / "Tue" — how the weekly reset reads.
+// "today" / "tomorrow" / "Tue" / "next Fri" — how the weekly reset reads. A
+// reset a week or more out lands on today's weekday (or later), so a bare
+// "Fri" on a Friday would read as today: say "next Fri".
 export function fmtResetDay(iso, now = new Date()) {
   const d = new Date(iso || NaN);
   if (isNaN(d)) return '';
@@ -151,5 +153,6 @@ export function fmtResetDay(iso, now = new Date()) {
   const diff = Math.round((that - today) / 86_400_000);
   if (diff <= 0) return 'today';
   if (diff === 1) return 'tomorrow';
-  return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()];
+  const day = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()];
+  return diff >= 7 ? `next ${day}` : day;
 }
