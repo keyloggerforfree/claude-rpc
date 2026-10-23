@@ -203,7 +203,7 @@ export const DEFAULT_CONFIG = {
           { details: "{sessionMilestoneLabel} · {project}", state: "{tokensLabel} · {messagesLabel}", requires: ["sessionMilestoneHit"] },
           // Subscription usage — only renders while the daemon's usage poll
           // is fresh (requires drops it otherwise; see the `usage` block).
-          { details: "Usage · {usageWeeklyPct}% weekly",    state: "{usageStateLabel}",               requires: ["usageWeeklyPct", "usageStateLabel"] },
+          { details: "Usage · {usageWeeklyLabel}",       state: "{usageSessionLabel}",             requires: ["usageWeeklyLabel", "usageSessionLabel"] },
         ],
       },
       thinking: {
@@ -242,7 +242,7 @@ export const DEFAULT_CONFIG = {
           { details: "{allFreshTokensFmt} fresh tokens",       state: "{allCachePctLabel}",                         requires: ["allCachePctLabel"] },
           { details: "Code churn · {linesAddedFmt} added",     state: "{linesNetFmt} net · {topLanguage}",            requires: ["topLanguage"] },
           { details: "Cost · {todayCostFmt} today",            state: "{allCostFmt} all-time",                        requires: ["allCost"] },
-          { details: "Usage · {usageWeeklyPct}% weekly",       state: "{usageStateLabel}",                            requires: ["usageWeeklyPct", "usageStateLabel"] },
+          { details: "Usage · {usageWeeklyLabel}",          state: "{usageSessionLabel}",                          requires: ["usageWeeklyLabel", "usageSessionLabel"] },
           { details: "Daily goal",                             state: "{goalLabel}",                                  requires: ["goalLabel"] },
           { details: "Monthly budget",                         state: "{budgetLabel}",                                requires: ["budgetLabel"] },
         ],

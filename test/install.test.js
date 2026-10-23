@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-const { ensureCanonicalExe, isOurHook } = await import('../src/install.js');
+const { ensureCanonicalExe, isOurHook, migrateUsageFrames } = await import('../src/install.js');
 const { DEFAULT_CONFIG } = await import('../src/default-config.js');
 
 test('isOurHook: matches our entries, never a third-party hook.js', () => {
@@ -87,10 +87,55 @@ test('reconcile: a default-derived idle rotation gains newly-shipped frames', ()
     rotation: dfl.idle.rotation.slice(0, 5).map((f) => JSON.parse(JSON.stringify(f))) } } } };
   migrateInPlace(cfg);
   assert.equal(cfg.presence.byStatus.idle.rotation.length, dfl.idle.rotation.length, 'backfilled to current count');
-  assert.ok(cfg.presence.byStatus.idle.rotation.some((f) => (f.requires || []).includes('usageWeeklyPct')),
-    'the v0.16 usage frame reaches an existing user');
+  assert.ok(cfg.presence.byStatus.idle.rotation.some((f) => (f.requires || []).includes('usageWeeklyLabel')),
+    'the usage frame reaches an existing user');
   assert.deepEqual(cfg.presence.byStatus.idle.rotation.slice(0, 5), dfl.idle.rotation.slice(0, 5),
     'existing frames are preserved in order, new ones appended');
+});
+
+// ── migrateUsageFrames (the real function — it's pure) ─────────────────
+const OLD_USAGE_FRAME = () => ({ details: 'Usage · {usageWeeklyPct}% weekly', state: '{usageStateLabel}', requires: ['usageWeeklyPct', 'usageStateLabel'] });
+
+test('migrateUsageFrames: the old default usage frame is rewritten in every rotation', () => {
+  const cfg = { presence: { byStatus: {
+    idle: { rotation: [{ details: 'This week · {weekHours}', state: 'x', requires: ['weekHours'] }, OLD_USAGE_FRAME()] },
+    working: { rotation: [OLD_USAGE_FRAME()] },
+  } } };
+  const changed = migrateUsageFrames(cfg);
+  assert.equal(changed.length, 2);
+  for (const frame of [cfg.presence.byStatus.idle.rotation[1], cfg.presence.byStatus.working.rotation[0]]) {
+    assert.equal(frame.details, 'Usage · {usageWeeklyLabel}');
+    assert.equal(frame.state, '{usageSessionLabel}');
+    assert.deepEqual(frame.requires, ['usageWeeklyLabel', 'usageSessionLabel']);
+  }
+  assert.equal(cfg.presence.byStatus.idle.rotation[0].details, 'This week · {weekHours}', 'other frames untouched');
+});
+
+test('migrateUsageFrames: a customized usage frame is left alone', () => {
+  const custom = { details: 'Plan · {usageWeeklyPct}%', state: '{usageStateLabel}', requires: ['usageWeeklyPct'] };
+  const cfg = { presence: { byStatus: { idle: { rotation: [custom] } } } };
+  assert.deepEqual(migrateUsageFrames(cfg), []);
+  assert.equal(cfg.presence.byStatus.idle.rotation[0].details, 'Plan · {usageWeeklyPct}%');
+});
+
+test('migrateUsageFrames: idempotent, and tolerant of configs without rotations', () => {
+  const cfg = { presence: { byStatus: { working: { rotation: [OLD_USAGE_FRAME()] }, idle: {} } } };
+  migrateUsageFrames(cfg);
+  assert.deepEqual(migrateUsageFrames(cfg), [], 'second run changes nothing');
+  assert.deepEqual(migrateUsageFrames({}), []);
+});
+
+test('migrateUsageFrames: a migrated rotation still counts as default-derived for reconcile', () => {
+  // Reconcile identifies frames by `requires`; an un-migrated old frame would
+  // make the rotation look customized and stop future default frames arriving.
+  const dfl = DEFAULT_CONFIG.presence.byStatus;
+  const id = (f) => 'r:' + [...(f.requires || [])].sort().join('|');
+  const rot = dfl.idle.rotation.map((f) => (/usageWeeklyLabel/.test(f.details) ? OLD_USAGE_FRAME() : JSON.parse(JSON.stringify(f))));
+  const cfg = { presence: { byStatus: { idle: { rotation: rot } } } };
+  const dIds = new Set(dfl.idle.rotation.map(id));
+  assert.ok(!rot.every((f) => dIds.has(id(f))), 'before: the old frame breaks default-derivation');
+  migrateUsageFrames(cfg);
+  assert.ok(cfg.presence.byStatus.idle.rotation.every((f) => dIds.has(id(f))), 'after: default-derived again');
 });
 
 test('reconcile: a customized rotation is left untouched', () => {

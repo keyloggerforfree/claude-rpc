@@ -559,6 +559,31 @@ export function uninstallMcp({ scope = 'user' } = {}) {
   return { ok: r.status === 0 };
 }
 
+// The usage rotation frame read "Usage · 1% weekly" over "session 5% ·
+// resets Fri" — the weekly reset day sat next to the SESSION %, so it looked
+// like the session limit reset on Friday. Each limit now carries its own
+// reset ({usageWeeklyLabel} / {usageSessionLabel}). Rewrites only frames that
+// match the old default verbatim (details + state); a customized frame is left
+// alone. Runs before migrateConfig's frame reconcile, which identifies frames
+// by `requires`: a stale copy of the old frame would make the rotation look
+// customized and stop it receiving future default frames. Pure (mutates cfg,
+// returns what changed) so tests can drive the real thing. Exported for tests.
+export function migrateUsageFrames(cfg) {
+  const OLD = { details: 'Usage · {usageWeeklyPct}% weekly', state: '{usageStateLabel}' };
+  const NEW = { details: 'Usage · {usageWeeklyLabel}', state: '{usageSessionLabel}', requires: ['usageWeeklyLabel', 'usageSessionLabel'] };
+  const changed = [];
+  for (const [status, block] of Object.entries(cfg?.presence?.byStatus || {})) {
+    if (!Array.isArray(block?.rotation)) continue;
+    block.rotation.forEach((frame, i) => {
+      if (frame?.details === OLD.details && frame?.state === OLD.state) {
+        block.rotation[i] = { ...frame, ...NEW };
+        changed.push(`presence.byStatus.${status}.rotation[${i}] usage frame`);
+      }
+    });
+  }
+  return changed;
+}
+
 // Non-destructive merge of any new top-level keys / presence blocks the
 // shipped DEFAULT_CONFIG has but the user's existing file doesn't.
 //
@@ -629,6 +654,8 @@ export function migrateConfig({ silent = false } = {}) {
     cfg.presence.byStatus.working.largeImageText = DEFAULT_CONFIG.presence.byStatus.working.largeImageText;
     added.push('presence.byStatus.working.largeImageText');
   }
+
+  added.push(...migrateUsageFrames(cfg));
 
   // v1.4.3: setup's "connect GitHub?" y could die on a server error (the
   // 2026-08-20 → 09-11 KV write-cap outage 500'd /verify/start most of every
