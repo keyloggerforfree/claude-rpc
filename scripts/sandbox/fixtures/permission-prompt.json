@@ -1,0 +1,18 @@
+{
+  "_comment": "Session stopped on a permission prompt for a Bash command, 2 minutes ago. claudePid 1 is never this machine's Claude Code, so no running shell counts as its approval: expect 'Waiting on you' throughout.",
+  "sessionStart": -300000,
+  "lastActivity": -120000,
+  "lastEventAt": -120000,
+  "status": "notification",
+  "cwd": "/tmp/proj",
+  "currentTool": "Bash",
+  "toolStartedAt": -125000,
+  "toolsInFlight": { "t1": { "tool": "Bash", "startedAt": -125000 } },
+  "toolsRunning": 1,
+  "turnOpen": true,
+  "permissionPendingAt": -120000,
+  "lastNotification": -120000,
+  "claudePid": 1,
+  "messages": 1,
+  "tools": 1
+}
