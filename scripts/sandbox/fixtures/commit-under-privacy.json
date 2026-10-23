@@ -1,0 +1,16 @@
+{
+  "_comment": "Claude just committed. With the default sandbox config (name-only + alias), expect 'Committed · Project' with no commit message or branch.",
+  "sessionStart": -300000,
+  "lastActivity": -5000,
+  "lastEventAt": -5000,
+  "status": "shipped",
+  "justShipped": -5000,
+  "justShippedKind": "commit",
+  "justShippedSubject": "fix acme-billing invoice rounding",
+  "justShippedBranch": "feat/acme-billing",
+  "cwd": "/tmp/proj",
+  "turnOpen": true,
+  "claudePid": 1,
+  "messages": 1,
+  "tools": 1
+}
