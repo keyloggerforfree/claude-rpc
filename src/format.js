@@ -257,8 +257,13 @@ export function buildVars(state, config, aggregate) {
   // Peak hour-of-day.
   const peak = agg.peakHour || null;
 
-  // Top-edited file.
-  const hotspot = agg.topEditedFiles?.[0] || null;
+  // Top-edited file. Built from lifetime stats across EVERY project, so the
+  // per-project privacy verdicts (name-only / hidden) never touch it — the
+  // card would name a file from any project, private ones included.
+  // `privacy.hotspot: false` is the global off switch: every hotspot var goes
+  // blank (count included, which is what the default frame is gated on), so
+  // any frame using them drops out of the rotation on its own.
+  const hotspot = config?.privacy?.hotspot === false ? null : (agg.topEditedFiles?.[0] || null);
 
   // Per-project stats for the current cwd, keyed by the cleaned basename so
   // it lines up with how scanner.aggregateFrom stores them.

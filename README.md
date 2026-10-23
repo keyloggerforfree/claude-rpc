@@ -252,6 +252,12 @@ Or globally, in `config.json`:
 
 A per-project `.claude-rpc.json` alias always takes priority over this global one, and it's never applied to projects that resolve `public`.
 
+`name-only` and `hidden` also drop the commit message and branch from the "just shipped" frame — it reads "Committed · <project>", not the commit subject. The Hotspot frame (your most-edited file) is built from lifetime stats across every project, so per-project privacy can't cover it; turn it off globally:
+
+```json
+{ "privacy": { "hotspot": false } }
+```
+
 If [`gh`](https://cli.github.com/) is installed and authenticated, GitHub-private repos auto-hide (`privacy.githubPrivateMode`, default `hidden` — opt out with `privacy.autoDetectGithubPrivate: false`). 5-minute cache, 1.5s timeout, silent skip when `gh` isn't there.
 
 Aggregates and local dashboards are never affected. Privacy is a one-way valve between local state and Discord.

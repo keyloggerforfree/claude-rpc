@@ -9,6 +9,8 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 const { applyPrivacy, resolveVisibility } = await import('../src/privacy.js');
+const { buildVars, fillTemplate } = await import('../src/format.js');
+const { DEFAULT_CONFIG } = await import('../src/default-config.js');
 
 function baseState(overrides = {}) {
   return {
@@ -134,6 +136,63 @@ test('applyPrivacy: name-only clears file/tool but keeps cwd', () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ── the shipped frame: commit subject + branch ─────────────────────────
+const shipped = (o = {}) => baseState({
+  status: 'shipped', justShipped: Date.now(), justShippedKind: 'commit',
+  justShippedSubject: 'fix acme-billing invoice rounding', justShippedBranch: 'feat/acme-billing', ...o,
+});
+
+test('applyPrivacy: name-only clears the commit subject and branch, keeps the ship', () => {
+  // The user's real setup: every project matched, name-only, a global alias.
+  const cfg = { privacy: { patterns: ['*'], mode: 'name-only', projectName: 'Project', autoDetectGithubPrivate: false } };
+  const r = applyPrivacy(shipped(), cfg);
+  assert.equal(r._privacy.visibility, 'name-only');
+  assert.equal(r.justShippedSubject, null);
+  assert.equal(r.justShippedBranch, null);
+  assert.equal(r.justShippedKind, 'commit', 'the ship itself still shows');
+  // Render the default shipped frame exactly as the daemon would.
+  const frame = DEFAULT_CONFIG.presence.byStatus.shipped;
+  const vars = buildVars(r, cfg, {});
+  assert.equal(fillTemplate(frame.details, vars), 'Committed · Project');
+  assert.equal(fillTemplate(frame.state, vars), '', 'no commit message (the empty line is dropped before sending)');
+  assert.equal(fillTemplate(frame.largeImageText, vars), 'Committed');
+});
+
+test('applyPrivacy: hidden clears the commit subject and branch too', () => {
+  const r = applyPrivacy(shipped(), { privacy: { patterns: ['*'], mode: 'hidden', autoDetectGithubPrivate: false } });
+  assert.equal(r.justShippedSubject, null);
+  assert.equal(r.justShippedBranch, null);
+});
+
+test('applyPrivacy: a public project keeps its commit subject and branch', () => {
+  const r = applyPrivacy(shipped(), { privacy: { autoDetectGithubPrivate: false } });
+  assert.equal(r.justShippedSubject, 'fix acme-billing invoice rounding');
+  assert.equal(r.justShippedBranch, 'feat/acme-billing');
+});
+
+// ── privacy.hotspot: false (global — hotspot spans every project) ───────
+const withHotspot = { topEditedFiles: [{ path: '/home/o/acme-billing/src/invoice.js', count: 42, daysSinceLastEdit: 0 }] };
+
+test('privacy.hotspot: false blanks every hotspot var and drops the frame', async () => {
+  const { framePasses } = await import('../src/format.js');
+  const frame = DEFAULT_CONFIG.presence.byStatus.idle.rotation.find((f) => /Hotspot/.test(f.details));
+  const on = buildVars(baseState({ status: 'idle' }), {}, withHotspot);
+  assert.equal(on.topEditedFile, 'invoice.js', 'default: the hotspot shows');
+  assert.ok(framePasses(frame, on));
+  const off = buildVars(baseState({ status: 'idle' }), { privacy: { hotspot: false } }, withHotspot);
+  assert.equal(off.topEditedFile, '');
+  assert.equal(off.topEditedCount, 0);
+  assert.equal(off.topEditedAgeLabel, '');
+  assert.ok(!framePasses(frame, off), 'the Hotspot frame drops out of the rotation');
+});
+
+test('privacy.hotspot: false applies in every project, public ones included', () => {
+  // Hotspot is global: a public cwd must not bring it back.
+  const vars = buildVars(baseState({ status: 'idle', cwd: '/home/o/open-source-thing' }),
+    { privacy: { hotspot: false, autoDetectGithubPrivate: false } }, withHotspot);
+  assert.equal(vars.topEditedFile, '');
 });
 
 test('applyPrivacy: hidden clears cwd entirely', () => {
