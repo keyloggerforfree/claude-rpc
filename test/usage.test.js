@@ -99,6 +99,9 @@ test('reset formatting: card-friendly time and day strings', () => {
   assert.equal(fmtResetDay(new Date('2026-06-12T18:00:00').toISOString(), now), 'today');
   assert.equal(fmtResetDay(new Date('2026-06-13T02:00:00').toISOString(), now), 'tomorrow');
   assert.equal(fmtResetDay(null), '');
+  // Friday → the following Friday: a bare "Fri" would read as today.
+  assert.equal(fmtResetDay(new Date('2026-06-19T08:00:00').toISOString(), now), 'next Fri');
+  assert.equal(fmtResetDay(new Date('2026-06-18T08:00:00').toISOString(), now), 'Thu', 'six days out stays bare');
   const six = new Date('2026-06-12T18:00:00');
   assert.equal(fmtResetTime(six.toISOString()), '6pm');
   const halfPast = new Date('2026-06-12T06:30:00');

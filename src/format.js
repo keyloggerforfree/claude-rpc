@@ -486,6 +486,23 @@ export function buildVars(state, config, aggregate) {
     if (!bits.length && usage.weeklyPct != null) bits.push(`weekly ${usage.weeklyPct}%`);
     usageStateLabel = bits.join(' · ');
   }
+  // Each limit paired with ITS OWN reset — what the default usage frame shows.
+  // {usageStateLabel} above put the WEEKLY reset day after the SESSION %, so
+  // "session 5% · resets Fri" read as if the session limit reset on Friday.
+  //   usageWeeklyLabel  → "1% weekly · resets Fri"
+  //   usageSessionLabel → "session 5% · resets 4:09pm"
+  // A reset that's missing or already past is left off.
+  const upcoming = (iso) => { const t = Date.parse(iso || ''); return Number.isFinite(t) && t > Date.now(); };
+  let usageWeeklyLabel = '';
+  let usageSessionLabel = '';
+  if (usage?.weeklyPct != null) {
+    const day = upcoming(usage.weeklyResetsAt) ? fmtResetDay(usage.weeklyResetsAt) : '';
+    usageWeeklyLabel = `${usage.weeklyPct}% weekly${day ? ` · resets ${day}` : ''}`;
+  }
+  if (usage?.sessionPct != null) {
+    const time = upcoming(usage.sessionResetsAt) ? fmtResetTime(usage.sessionResetsAt) : '';
+    usageSessionLabel = `session ${usage.sessionPct}%${time ? ` · resets ${time}` : ''}`;
+  }
 
   return {
     // session — raw
@@ -528,6 +545,8 @@ export function buildVars(state, config, aggregate) {
     usageSessionResets: usage ? fmtResetTime(usage.sessionResetsAt) : '',
     usageWeeklyResets: usage ? fmtResetDay(usage.weeklyResetsAt) : '',
     usageStateLabel,
+    usageWeeklyLabel,
+    usageSessionLabel,
     usagePlan: usage?.plan ? usage.plan.charAt(0).toUpperCase() + usage.plan.slice(1) : '',
 
     // ── File / directory / language (v0.3.6) ────────────────────
