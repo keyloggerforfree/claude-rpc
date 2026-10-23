@@ -13,7 +13,9 @@
 // "Visibility" levels:
 //   public      everything as-is (default)
 //   name-only   project name kept, but currentFile / currentTool / files
-//               arrays cleared so the card doesn't leak paths
+//               arrays cleared so the card doesn't leak paths, and the
+//               just-shipped commit subject + branch cleared ("Committed ·
+//               <project>", not the commit message or branch name)
 //   hidden      cwd cleared entirely; daemon then short-circuits to
 //               clearActivity (same effect as hideWhenStale)
 //
@@ -332,15 +334,26 @@ export function applyPrivacy(state, config = {}) {
     return state;
   }
 
+  // What a non-public card must not carry. The ship fields matter as much as
+  // the file ones: after a `git commit` / `git push` the shipped frame showed
+  // the commit subject ({lastCommit}) and the branch ({justShippedLabel},
+  // "Pushed to feat/billing-fix") — a commit message routinely names the
+  // client, feature or file. The ship itself still shows ("Committed").
+  const scrubbed = {
+    currentTool: null,
+    currentFile: null,
+    filesEdited: [],
+    filesRead: [],
+    filesOpened: [],
+    justShippedSubject: null,
+    justShippedBranch: null,
+  };
+
   if (visibility === 'name-only') {
     return {
       ...state,
+      ...scrubbed,
       cwd: projectName ? joinCwdAlias(state.cwd, projectName) : state.cwd,
-      currentTool: null,
-      currentFile: null,
-      filesEdited: [],
-      filesRead: [],
-      filesOpened: [],
       _privacy: { visibility, alias: !!projectName },
     };
   }
@@ -348,12 +361,8 @@ export function applyPrivacy(state, config = {}) {
   // hidden
   return {
     ...state,
+    ...scrubbed,
     cwd: '',
-    currentTool: null,
-    currentFile: null,
-    filesEdited: [],
-    filesRead: [],
-    filesOpened: [],
     _privacy: { visibility, alias: false },
   };
 }
