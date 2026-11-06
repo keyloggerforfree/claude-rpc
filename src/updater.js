@@ -15,6 +15,14 @@ import { join, dirname, delimiter } from 'node:path';
 import { STATE_DIR, ROOT, IS_PACKAGED, IS_NPM_INSTALL, IS_NPX } from './paths.js';
 
 export const UPDATE_STATE_PATH = join(STATE_DIR, 'update.json');
+
+// This build is the keyloggerforfree fork, installed from source. Upstream's
+// updater installs UPSTREAM's npm package — and it labels every npm install
+// "global", including the fork's local ~/node_modules copy — so left on, it
+// would replace the fork (privacy fixes included) or put upstream's
+// `claude-rpc` on PATH ahead of it. Disabled until the fork has its own
+// update source; see installKind / checkForUpdate.
+export const FORK = 'keyloggerforfree/claude-rpc';
 export const REGISTRY_URL = 'https://registry.npmjs.org/claude-rpc/latest';
 const RETRY_FAILED_MS = 24 * 3_600_000;   // don't hammer a version that failed to install
 const COOLDOWN_MS = 2 * 3_600_000;        // a release must be seen this long before it's installed — a yank window
@@ -42,7 +50,8 @@ export function sameMajor(a, b) {
 
 // How this copy was installed → whether we may update it ourselves and what to
 // tell the user otherwise.
-export function installKind({ packaged = IS_PACKAGED, npm = IS_NPM_INSTALL, npx = IS_NPX, root = ROOT } = {}) {
+export function installKind({ fork = FORK, packaged = IS_PACKAGED, npm = IS_NPM_INSTALL, npx = IS_NPX, root = ROOT } = {}) {
+  if (fork) return 'fork';
   if (packaged) return 'packaged';
   if (npx) return 'npx';
   if (/[\\/]Cellar[\\/]/.test(root)) return 'brew';
@@ -56,6 +65,7 @@ export function updateCommand(kind) {
     case 'npx': return 'npx claude-rpc@latest setup';
     case 'brew': return 'brew upgrade claude-rpc';
     case 'dev': return 'git pull';
+    case 'fork': return `check for new releases at https://github.com/${FORK}/releases, then update from source (README → Updating)`;
     default: return 'npm install -g claude-rpc@latest';
   }
 }
@@ -121,6 +131,8 @@ export async function installVersion(version) {
 // One check cycle. Returns { plan, latest, installed }. `install` is injectable
 // for tests; callers restart the daemon when `installed` is true.
 export async function checkForUpdate({ current, auto, kind = installKind(), fetchLatestFn = fetchLatest, install = installVersion, now = Date.now(), cooldownMs = COOLDOWN_MS, statePath = UPDATE_STATE_PATH } = {}) {
+  // The fork: no registry request, no install, no state written (see FORK).
+  if (kind === 'fork') return { plan: { action: 'none', reason: 'auto-update is disabled in this fork' }, latest: null, installed: false };
   const latest = await fetchLatestFn();
   writeUpdateState({ checkedAt: now, ...(latest ? { latest } : {}) }, statePath);
   if (!latest) return { plan: { action: 'none', reason: 'registry unreachable' }, latest: null, installed: false };

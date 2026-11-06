@@ -2199,6 +2199,13 @@ async function doUpdate(argv) {
   const sub = (argv[0] || 'check').toLowerCase();
   const { installKind, updateCommand, fetchLatest, isNewer, sameMajor, installVersion, readUpdateState, writeUpdateState } = await import('./updater.js');
   const kind = installKind();
+  if (kind === 'fork') {
+    // Every subcommand (check / now / on / off / status): the fork never asks
+    // npm, never installs, never toggles a setting that can't take effect.
+    console.log(`  ${c.cyan}·${c.reset}  v${VERSION} · auto-update is disabled in this fork`);
+    console.log(`     ${c.gray}↳ ${c.reset}${c.cyan}${updateCommand(kind)}${c.reset}`);
+    return;
+  }
   const userCfg = readJson(CONFIG_PATH, {});
   const auto = loadConfig().update?.auto !== false;
   if (sub === 'on' || sub === 'off') {

@@ -359,6 +359,13 @@ checksums. Avoid it by not installing the dashboard.
 
 ### 3h. CLI auto-update — ON by default, npm global installs only
 
+> **In the keyloggerforfree fork, auto-update is disabled entirely.** It
+> installs upstream's npm package, which would replace the fork. The daemon
+> makes no registry request and never installs anything, and `claude-rpc
+> update` points at https://github.com/keyloggerforfree/claude-rpc/releases
+> instead (`FORK` in `src/updater.js`). The rest of this section describes
+> upstream's behavior.
+
 **Source:** `src/updater.js`, called from the daemon; settings in
 `default-config.js` (`update`). Every ~6 hours the daemon sends one plain
 `GET https://registry.npmjs.org/claude-rpc/latest` (no identifiers, no
