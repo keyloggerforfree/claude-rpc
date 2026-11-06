@@ -21,14 +21,14 @@ import { writeFileAtomic } from './atomic-rename.js';
 // node:crypto, node:readline, node:child_process) are imported inside that
 // command's handler, like doctor.js/card.js/mcp.js always were.
 let readActiveState, statePathFor, loadConfig, hasUserConfig, spawnDaemonDetached, daemonAlive;
-let findDaemonPids, isAlive;
+let findDaemonPids, signalDaemons, waitForDaemonsToExit;
 let buildVars, fillTemplate, humanProject, humanTool, applyIdle, framePasses, fmtNum, fmtHours;
 let scan, readAggregate, findLiveSessions, dayKey, weekKey;
 let fmtCost;
 let readUsageCache, fetchUsage, writeUsageCache, fmtResetTime, fmtResetDay;
 
 async function loadDaemonCtl() {
-  ({ spawnDaemonDetached, daemonAlive, findDaemonPids, isAlive } = await import('./ensure-daemon.js'));
+  ({ spawnDaemonDetached, daemonAlive, findDaemonPids, signalDaemons, waitForDaemonsToExit } = await import('./ensure-daemon.js'));
 }
 
 // Idempotent — repeat imports resolve from the module cache.
@@ -138,65 +138,38 @@ async function confirmDaemonUp({ timeoutMs = 3000, intervalMs = 100 } = {}) {
 // Stray lines print even when `quiet`: a stray is never expected, so restart
 // and setup must surface it too. Returns { signalled, strays } — whether the
 // pid-file daemon was signalled, and the stray pids sent SIGTERM — so restart
-// can wait on (and escalate) all of them.
+// can wait on (and escalate) all of them. The signalling itself lives in
+// ensure-daemon.signalDaemons (unit-tested); this only reports.
 function stopDaemon({ quiet = false } = {}) {
   const pid = daemonAlive();
   const found = findDaemonPids().filter((p) => p !== pid);
   if (!pid && !found.length) { if (!quiet) console.log(`  ${c.cyan}·${c.reset}  daemon not running`); return { signalled: false, strays: [] }; }
-  let signalled = false;
-  const strays = [];
-  if (pid) {
-    try {
-      process.kill(pid, 'SIGTERM');
-      signalled = true;
-      if (!quiet) console.log(`  ${c.green}✓${c.reset}  ${'daemon stopping'.padEnd(16)}${c.dim}sent SIGTERM to pid ${pid}${c.reset}`);
-    } catch (e) {
-      if (!quiet) console.log(`  ${c.red}✗${c.reset}  ${'stop failed'.padEnd(16)}${c.dim}${e.message}${c.reset}`);
-    }
+  const r = signalDaemons({ pid, strays: found });
+  if (r.signalled && !quiet) console.log(`  ${c.green}✓${c.reset}  ${'daemon stopping'.padEnd(16)}${c.dim}sent SIGTERM to pid ${pid}${c.reset}`);
+  for (const s of r.strays) {
+    console.log(`  ${c.yellow}!${c.reset}  ${'stray daemon'.padEnd(16)}${c.dim}sent SIGTERM to pid ${s} (not in the pid file)${c.reset}`);
   }
-  for (const s of found) {
-    try {
-      process.kill(s, 'SIGTERM');
-      strays.push(s);
-      console.log(`  ${c.yellow}!${c.reset}  ${'stray daemon'.padEnd(16)}${c.dim}sent SIGTERM to pid ${s} (not in the pid file)${c.reset}`);
-    } catch (e) {
-      console.log(`  ${c.red}✗${c.reset}  ${'stray stop failed'.padEnd(16)}${c.dim}pid ${s}: ${e.message}${c.reset}`);
-    }
+  for (const e of r.errors) {
+    if (!e.stray && quiet) continue;
+    console.log(`  ${c.red}✗${c.reset}  ${(e.stray ? 'stray stop failed' : 'stop failed').padEnd(16)}${c.dim}${e.stray ? `pid ${e.pid}: ` : ''}${e.message}${c.reset}`);
   }
-  return { signalled, strays };
+  return { signalled: r.signalled, strays: r.strays };
 }
 
 // Resolves once the replacement daemon has been spawned (true) or couldn't be
 // (false), so callers can confirm it and a following `stop` finds its pid.
-function restartDaemon() {
-  return new Promise((resolve) => {
-    const { signalled, strays } = stopDaemon({ quiet: true });
-    if (!signalled && !strays.length) { resolve(startDaemon()); return; }
-    // Poll for the old daemon to release the PID file rather than guessing with a
-    // fixed sleep — under load 600ms wasn't always enough, and startDaemon would
-    // then see it "still up" and no-op, leaving NO daemon running once the old
-    // one exited. Strays are waited on too, so the new daemon never starts next
-    // to one. Give up after ~3s, force-kill whatever is wedged, and start anyway.
-    const deadline = Date.now() + 3000;
-    const tick = () => {
-      const left = strays.filter(isAlive);
-      if (!daemonAlive() && !left.length) { resolve(startDaemon()); return; }
-      if (Date.now() >= deadline) {
-        const pid = daemonAlive();
-        if (pid) { try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ } }
-        for (const s of left) {
-          try {
-            process.kill(s, 'SIGKILL');
-            console.log(`  ${c.yellow}!${c.reset}  ${'stray daemon'.padEnd(16)}${c.dim}ignored SIGTERM — sent SIGKILL to pid ${s}${c.reset}`);
-          } catch { /* exited at the last moment */ }
-        }
-        resolve(startDaemon());
-        return;
-      }
-      setTimeout(tick, 50);
-    };
-    setTimeout(tick, 50);
-  });
+// Waits for the old daemon and any strays to exit first (ensure-daemon.
+// waitForDaemonsToExit: ~3s, then SIGKILL), so the new one never starts next
+// to one or no-ops against a pid file that's still held.
+async function restartDaemon() {
+  const { signalled, strays } = stopDaemon({ quiet: true });
+  if (signalled || strays.length) {
+    const { killedStrays } = await waitForDaemonsToExit({ strays });
+    for (const s of killedStrays) {
+      console.log(`  ${c.yellow}!${c.reset}  ${'stray daemon'.padEnd(16)}${c.dim}ignored SIGTERM — sent SIGKILL to pid ${s}${c.reset}`);
+    }
+  }
+  return startDaemon();
 }
 
 // ── Box drawing — auto-widens to fit longest line ────────────────────────────

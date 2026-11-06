@@ -70,6 +70,22 @@ test('installHooks: newer events only for a Claude Code that knows them (an unkn
   for (const e of ['PostToolUseFailure', 'PostCompact', 'StopFailure']) assert.equal(e in hooks, false, e);
 });
 
+test('installHooks: PostToolBatch only from Claude Code 2.1.118 (verified against the published packages)', (t) => {
+  // Not in Claude Code's changelog; absent from 2.1.117's hook-event list,
+  // present from 2.1.118. Wiring it one version early would make that version
+  // reject the WHOLE hooks block, the user's own hooks included.
+  const home = mkdtempSync(join(tmpdir(), 'rpc-async-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  let hooks = installAt(home, '2.1.117');
+  assert.equal('PostToolBatch' in hooks, false, '2.1.117: not wired');
+  assert.ok('StopFailure' in hooks, 'older optional events still wired');
+  hooks = installAt(home, '2.1.118');
+  assert.ok('PostToolBatch' in hooks, '2.1.118: wired');
+  assert.notEqual(hooks.PostToolBatch[0].hooks[0].async, true, 'once per batch: synchronous, so it orders after the async tool hooks');
+  hooks = installAt(home, '2.1.117'); // downgrade: it must be removed again
+  assert.equal('PostToolBatch' in hooks, false, 'removed again on downgrade');
+});
+
 test('installHooks: the wired command runs through sh, like Claude Code\'s hook shell', (t) => {
   if (process.platform === 'win32') return t.skip('POSIX shell check');
   const home = mkdtempSync(join(tmpdir(), 'rpc-async-'));

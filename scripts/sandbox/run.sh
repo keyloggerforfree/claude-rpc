@@ -35,6 +35,7 @@ SECONDS_TO_RUN="${2:-10}"
 # A short base path: Unix socket paths max out at ~108 bytes.
 BOX="$(mktemp -d -t crpc-sbx.XXXX)"
 cleanup() {
+  [[ -n "${DAEMON_PID:-}" ]] && kill "$DAEMON_PID" 2>/dev/null || true
   [[ -n "${FAKE_PID:-}" ]] && kill "$FAKE_PID" 2>/dev/null || true
   rm -rf "$BOX"
 }
@@ -85,11 +86,18 @@ FAKE_PID=$!
 sleep 1
 
 echo "▶ daemon running ${SECONDS_TO_RUN}s on $(basename "$FIXTURE")"
-set +e
+# Background + SIGTERM rather than `timeout`, which macOS doesn't ship.
 HOME="$BOX/home" XDG_CONFIG_HOME="$BOX/cfg" XDG_RUNTIME_DIR="$BOX/run" TMPDIR="$BOX/tmp" \
-  CLAUDE_RPC_NO_AUTOSTART=1 timeout "$SECONDS_TO_RUN" node "$PKG/src/daemon.js" > "$BOX/stdout.txt" 2>&1
-status=$?
-set -e
+  CLAUDE_RPC_NO_AUTOSTART=1 node "$PKG/src/daemon.js" > "$BOX/stdout.txt" 2>&1 &
+DAEMON_PID=$!
+sleep "$SECONDS_TO_RUN"
+if kill -0 "$DAEMON_PID" 2>/dev/null; then
+  kill -TERM "$DAEMON_PID" 2>/dev/null || true
+  status=0   # still running when the time was up — the expected way out
+else
+  status=1   # exited on its own before the time was up: a crash
+fi
+set +e; wait "$DAEMON_PID" 2>/dev/null; set -e
 
 echo
 echo "── daemon log ──"
@@ -116,5 +124,9 @@ else
   echo "(nothing — the daemon never pushed a presence)"
 fi
 
-# timeout's 124 is the expected way out; anything else is a crash.
-[[ $status -eq 124 ]] && exit 0 || exit "$status"
+if [[ $status -ne 0 ]]; then
+  echo
+  echo "── the daemon exited before ${SECONDS_TO_RUN}s — stdout/stderr ──"
+  cat "$BOX/stdout.txt"
+fi
+exit "$status"

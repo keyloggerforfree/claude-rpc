@@ -14,7 +14,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-const { shouldSpawnDaemon, claimSingleInstance, isAlive, ensureDaemonRunning, looksLikeRpcDaemon, findDaemonPids } = await import('../src/ensure-daemon.js');
+const { shouldSpawnDaemon, claimSingleInstance, isAlive, ensureDaemonRunning, looksLikeRpcDaemon, findDaemonPids, signalDaemons, waitForDaemonsToExit } = await import('../src/ensure-daemon.js');
+const { spawn } = await import('node:child_process');
 
 // ── looksLikeRpcDaemon (stray-daemon scan behind `claude-rpc stop`) ─────
 test('looksLikeRpcDaemon: matches dev, npm and packaged daemons', () => {
@@ -171,4 +172,60 @@ test('claimSingleInstance: our OWN recycled pid in the file is reclaimed, not mi
   const r = claimSingleInstance({ pidPath, pid: 1234, alive: () => true });
   assert.equal(r, null, 'owner === our pid cannot be a different live daemon → reclaim');
   assert.equal(readFileSync(pidPath, 'utf8'), '1234');
+});
+
+// ── signalDaemons / waitForDaemonsToExit (CLI stop & restart) ─────────────
+test('signalDaemons: SIGTERM to the pid-file daemon and every stray, failures reported', () => {
+  const sent = [];
+  const kill = (p, sig) => { if (p === 3) throw new Error('EPERM'); sent.push([p, sig]); };
+  const r = signalDaemons({ pid: 1, strays: [2, 3], kill });
+  assert.deepEqual(sent, [[1, 'SIGTERM'], [2, 'SIGTERM']]);
+  assert.equal(r.signalled, true);
+  assert.deepEqual(r.strays, [2]);
+  assert.deepEqual(r.errors, [{ pid: 3, stray: true, message: 'EPERM' }]);
+});
+
+test('signalDaemons: no pid-file daemon → only strays are signalled', () => {
+  const sent = [];
+  const r = signalDaemons({ pid: 0, strays: [7], kill: (p) => sent.push(p) });
+  assert.deepEqual(sent, [7]);
+  assert.equal(r.signalled, false);
+});
+
+test('waitForDaemonsToExit: resolves once everything has exited, killing nothing', async () => {
+  const living = new Set([10, 11]);
+  let daemon = 9;
+  setTimeout(() => { daemon = 0; living.delete(10); }, 20);
+  setTimeout(() => living.delete(11), 40);
+  const killed = [];
+  const r = await waitForDaemonsToExit({
+    strays: [10, 11], daemonPid: () => daemon, alive: (p) => living.has(p),
+    kill: (p) => killed.push(p), timeoutMs: 1000, intervalMs: 5,
+  });
+  assert.deepEqual(r, { killedDaemon: null, killedStrays: [] });
+  assert.deepEqual(killed, []);
+});
+
+test('waitForDaemonsToExit: after the timeout, SIGKILLs a wedged daemon and stubborn strays', async () => {
+  const killed = [];
+  const r = await waitForDaemonsToExit({
+    strays: [20, 21], daemonPid: () => 19, alive: (p) => p === 21, // stray 20 already exited
+    kill: (p, sig) => killed.push([p, sig]), timeoutMs: 30, intervalMs: 5,
+  });
+  assert.deepEqual(killed, [[19, 'SIGKILL'], [21, 'SIGKILL']]);
+  assert.deepEqual(r, { killedDaemon: 19, killedStrays: [21] });
+});
+
+test('stop + restart wait: a REAL process that ignores SIGTERM is SIGKILLed', { skip: process.platform === 'win32' }, async () => {
+  // Stands in for a wedged stray daemon: traps SIGTERM and keeps running.
+  const child = spawn(process.execPath, ['-e', "process.on('SIGTERM', () => {}); process.stdout.write('ready'); setInterval(() => {}, 1e6)"],
+    { stdio: ['ignore', 'pipe', 'ignore'] });
+  await new Promise((res) => child.stdout.once('data', res)); // its SIGTERM trap is installed
+  const exited = new Promise((res) => child.once('exit', (code, signal) => res(signal)));
+  const sig = signalDaemons({ pid: 0, strays: [child.pid] });
+  assert.deepEqual(sig.strays, [child.pid]);
+  assert.ok(isAlive(child.pid), 'SIGTERM ignored — still running');
+  const r = await waitForDaemonsToExit({ strays: [child.pid], daemonPid: () => 0, timeoutMs: 300, intervalMs: 20 });
+  assert.deepEqual(r.killedStrays, [child.pid]);
+  assert.equal(await exited, 'SIGKILL');
 });
