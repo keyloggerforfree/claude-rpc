@@ -101,6 +101,55 @@ export function findDaemonPids({ exclude = process.pid } = {}) {
   return pids;
 }
 
+// ── Stopping daemons (CLI stop / restart) ─────────────────────────────────
+// SIGTERM to the pid-file daemon (pid, may be 0) and to every stray — a
+// daemon the pid file doesn't know about (see findDaemonPids). Returns
+// { signalled, strays, errors }: whether the pid-file daemon was signalled,
+// the strays that were, and { pid, stray, message } for each that couldn't
+// be. The CLI prints; this only acts. `kill` is injectable for tests.
+export function signalDaemons({ pid = 0, strays = [], kill = (p, sig) => process.kill(p, sig) } = {}) {
+  const out = { signalled: false, strays: [], errors: [] };
+  if (pid) {
+    try { kill(pid, 'SIGTERM'); out.signalled = true; }
+    catch (e) { out.errors.push({ pid, stray: false, message: e.message }); }
+  }
+  for (const s of strays) {
+    try { kill(s, 'SIGTERM'); out.strays.push(s); }
+    catch (e) { out.errors.push({ pid: s, stray: true, message: e.message }); }
+  }
+  return out;
+}
+
+// Wait for the pid-file daemon and the given strays to exit, polling rather
+// than guessing with a fixed sleep (under load 600ms wasn't always enough, and
+// a replacement started while the old daemon still held the pid file no-oped,
+// leaving NO daemon). Strays are waited on too, so a new daemon never starts
+// next to one. After timeoutMs, SIGKILL whatever is still there. Resolves
+// { killedDaemon, killedStrays } — the pids that had to be force-killed.
+export function waitForDaemonsToExit({
+  strays = [], daemonPid = () => daemonAlive(), alive = isAlive,
+  kill = (p, sig) => process.kill(p, sig), timeoutMs = 3000, intervalMs = 50, now = () => Date.now(),
+} = {}) {
+  return new Promise((resolve) => {
+    const deadline = now() + timeoutMs;
+    const tick = () => {
+      const left = strays.filter((p) => alive(p));
+      const pid = daemonPid();
+      if (!pid && !left.length) { resolve({ killedDaemon: null, killedStrays: [] }); return; }
+      if (now() >= deadline) {
+        let killedDaemon = null;
+        if (pid) { try { kill(pid, 'SIGKILL'); killedDaemon = pid; } catch { /* already gone */ } }
+        const killedStrays = [];
+        for (const s of left) { try { kill(s, 'SIGKILL'); killedStrays.push(s); } catch { /* exited at the last moment */ } }
+        resolve({ killedDaemon, killedStrays });
+        return;
+      }
+      setTimeout(tick, intervalMs);
+    };
+    setTimeout(tick, intervalMs);
+  });
+}
+
 // The single source of truth for HOW to launch the daemon, shared by every
 // launcher so the CLI and the hook spawn it identically:
 //   packaged → "<canonical exe>" daemon   (prefer the canonical install over a

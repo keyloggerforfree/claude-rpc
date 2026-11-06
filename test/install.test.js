@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-const { ensureCanonicalExe, isOurHook, migrateUsageFrames } = await import('../src/install.js');
+const { ensureCanonicalExe, isOurHook, migrateUsageFrames, migrateWorkingLabel } = await import('../src/install.js');
 const { DEFAULT_CONFIG } = await import('../src/default-config.js');
 
 test('isOurHook: matches our entries, never a third-party hook.js', () => {
@@ -92,6 +92,23 @@ test('reconcile: a default-derived idle rotation gains newly-shipped frames', ()
     'the usage frame reaches an existing user');
   assert.deepEqual(cfg.presence.byStatus.idle.rotation.slice(0, 5), dfl.idle.rotation.slice(0, 5),
     'existing frames are preserved in order, new ones appended');
+});
+
+// ── migrateWorkingLabel (the real function — it's pure) ────────────────
+test('migrateWorkingLabel: the old "Working on a {fileLang} file" becomes {workLabel}', () => {
+  const cfg = { presence: { byStatus: { working: { details: 'D', largeImageText: 'Working on a {fileLang} file' } } } };
+  assert.deepEqual(migrateWorkingLabel(cfg), ['presence.byStatus.working.largeImageText']);
+  assert.equal(cfg.presence.byStatus.working.largeImageText, '{workLabel}');
+  assert.equal(cfg.presence.byStatus.working.details, 'D', 'nothing else touched');
+  assert.deepEqual(migrateWorkingLabel(cfg), [], 'idempotent');
+});
+
+test('migrateWorkingLabel: a customized hover text, or none at all, is left alone', () => {
+  const custom = { presence: { byStatus: { working: { largeImageText: 'Hacking on {fileLang}' } } } };
+  assert.deepEqual(migrateWorkingLabel(custom), []);
+  assert.equal(custom.presence.byStatus.working.largeImageText, 'Hacking on {fileLang}');
+  assert.deepEqual(migrateWorkingLabel({}), []);
+  assert.deepEqual(migrateWorkingLabel({ presence: { byStatus: {} } }), []);
 });
 
 // ── migrateUsageFrames (the real function — it's pure) ─────────────────
