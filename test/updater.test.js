@@ -15,11 +15,44 @@ test('isNewer: numeric compare, ignores prereleases and junk', () => {
 });
 
 test('installKind: classifies how this copy was installed', () => {
-  assert.equal(installKind({ packaged: true, npm: false, npx: false, root: '/x' }), 'packaged');
-  assert.equal(installKind({ packaged: false, npm: true, npx: true, root: '/x/_npx/y' }), 'npx');
-  assert.equal(installKind({ packaged: false, npm: true, npx: false, root: '/opt/Cellar/claude-rpc/1/lib/node_modules/claude-rpc' }), 'brew');
-  assert.equal(installKind({ packaged: false, npm: true, npx: false, root: '/usr/lib/node_modules/claude-rpc' }), 'npm-global');
-  assert.equal(installKind({ packaged: false, npm: false, npx: false, root: '/home/me/claude-rpc' }), 'dev');
+  // fork: null — upstream's classification, as if this weren't the fork build.
+  assert.equal(installKind({ fork: null, packaged: true, npm: false, npx: false, root: '/x' }), 'packaged');
+  assert.equal(installKind({ fork: null, packaged: false, npm: true, npx: true, root: '/x/_npx/y' }), 'npx');
+  assert.equal(installKind({ fork: null, packaged: false, npm: true, npx: false, root: '/opt/Cellar/claude-rpc/1/lib/node_modules/claude-rpc' }), 'brew');
+  assert.equal(installKind({ fork: null, packaged: false, npm: true, npx: false, root: '/usr/lib/node_modules/claude-rpc' }), 'npm-global');
+  assert.equal(installKind({ fork: null, packaged: false, npm: false, npx: false, root: '/home/me/claude-rpc' }), 'dev');
+});
+
+test('installKind: the fork build is always "fork" — even a local npm install upstream would call global', () => {
+  assert.equal(installKind(), 'fork', 'this build');
+  assert.equal(installKind({ packaged: false, npm: true, npx: false, root: '/home/me/node_modules/claude-rpc' }), 'fork');
+});
+
+test('checkForUpdate: the fork never asks npm, never installs, writes no state', async (t) => {
+  const { mkdtempSync, rmSync, existsSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  const dir = mkdtempSync(join(tmpdir(), 'rpc-upd-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const statePath = join(dir, 'update.json');
+  let fetched = 0; let installed = 0;
+  const r = await checkForUpdate({
+    current: '1.7.2', auto: true, kind: 'fork', statePath,
+    fetchLatestFn: async () => { fetched++; return '9.9.9'; },
+    install: async () => { installed++; return { ok: true, output: '' }; },
+  });
+  assert.equal(fetched, 0, 'no registry request');
+  assert.equal(installed, 0, 'no install');
+  assert.equal(r.installed, false);
+  assert.equal(r.plan.action, 'none');
+  assert.equal(existsSync(statePath), false, 'no update state written');
+});
+
+test('updateCommand: the fork points at its own releases page', async () => {
+  const { updateCommand, FORK } = await import('../src/updater.js');
+  assert.equal(FORK, 'keyloggerforfree/claude-rpc');
+  assert.match(updateCommand('fork'), /https:\/\/github\.com\/keyloggerforfree\/claude-rpc\/releases/);
+  assert.doesNotMatch(updateCommand('fork'), /npm install -g/);
 });
 
 test('planUpdate: installs only same-major, npm-global, auto-on, not recently failed', () => {
