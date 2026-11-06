@@ -571,6 +571,20 @@ export function uninstallMcp({ scope = 'user' } = {}) {
   return { ok: r.status === 0 };
 }
 
+// byStatus.working.largeImageText was "Working on a {fileLang} file", which
+// read "Working on a file" for Bash, file-less tools and gaps between tools.
+// {workLabel} describes the actual activity. Verbatim old default only; a
+// customized hover text is left alone. Pure (mutates cfg, returns what
+// changed) so tests can drive the real thing. Exported for tests.
+export function migrateWorkingLabel(cfg) {
+  const OLD = 'Working on a {fileLang} file';
+  const working = cfg?.presence?.byStatus?.working;
+  const next = DEFAULT_CONFIG.presence?.byStatus?.working?.largeImageText;
+  if (working?.largeImageText !== OLD || !next) return [];
+  working.largeImageText = next;
+  return ['presence.byStatus.working.largeImageText'];
+}
+
 // The usage rotation frame read "Usage · 1% weekly" over "session 5% ·
 // resets Fri" — the weekly reset day sat next to the SESSION %, so it looked
 // like the session limit reset on Friday. Each limit now carries its own
@@ -657,16 +671,7 @@ export function migrateConfig({ silent = false } = {}) {
     }
   }
 
-  // byStatus.working.largeImageText was "Working on a {fileLang} file", which
-  // read "Working on a file" for Bash, file-less tools and gaps between tools.
-  // {workLabel} describes the actual activity. Verbatim old default only.
-  const OLD_WORKING_LIT = 'Working on a {fileLang} file';
-  if (cfg.presence.byStatus?.working?.largeImageText === OLD_WORKING_LIT &&
-      DEFAULT_CONFIG.presence?.byStatus?.working?.largeImageText) {
-    cfg.presence.byStatus.working.largeImageText = DEFAULT_CONFIG.presence.byStatus.working.largeImageText;
-    added.push('presence.byStatus.working.largeImageText');
-  }
-
+  added.push(...migrateWorkingLabel(cfg));
   added.push(...migrateUsageFrames(cfg));
 
   // v1.4.3: setup's "connect GitHub?" y could die on a server error (the

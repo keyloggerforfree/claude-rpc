@@ -22,14 +22,14 @@ import { writeFileAtomic } from './atomic-rename.js';
 // command's handler, like doctor.js/card.js/mcp.js always were.
 let readActiveState, statePathFor, loadConfig, hasUserConfig, spawnDaemonDetached, daemonAlive;
 let stopDaemonAndWait, markStopped, clearStopped, isStopped, readDaemonInfo, shouldReplaceDaemon;
-let findDaemonPids, isAlive;
+let findDaemonPids, signalDaemons, waitForDaemonsToExit;
 let buildVars, fillTemplate, humanProject, humanTool, applyIdle, framePasses, fmtNum, fmtHours;
 let scan, readAggregate, findLiveSessions, dayKey, weekKey;
 let fmtCost;
 let readUsageCache, fetchUsage, writeUsageCache, fmtResetTime, fmtResetDay;
 
 async function loadDaemonCtl() {
-  ({ spawnDaemonDetached, daemonAlive, stopDaemonAndWait, markStopped, clearStopped, isStopped, readDaemonInfo, shouldReplaceDaemon, findDaemonPids, isAlive } = await import('./ensure-daemon.js'));
+  ({ spawnDaemonDetached, daemonAlive, stopDaemonAndWait, markStopped, clearStopped, isStopped, readDaemonInfo, shouldReplaceDaemon, findDaemonPids, signalDaemons, waitForDaemonsToExit } = await import('./ensure-daemon.js'));
 }
 
 // Idempotent — repeat imports resolve from the module cache.
@@ -150,27 +150,25 @@ async function confirmDaemonUp({ timeoutMs = 3000, intervalMs = 100 } = {}) {
 // watchdog tick, but a stray running older code never reads it — and any
 // stray keeps pushing presence, possibly unprivatized, after `stop` reported
 // success. Found by scanning the process table (findDaemonPids), SIGTERMed,
-// given ~3s, then SIGKILLed. Lines print even from quiet callers: a stray is
+// given ~3s, then SIGKILLed (ensure-daemon.signalDaemons /
+// waitForDaemonsToExit, unit-tested). Lines print even from quiet callers: a stray is
 // never expected. Returns how many strays there were.
 async function stopStrays(pid) {
-  const strays = findDaemonPids().filter((p) => p !== pid);
-  for (const s of strays) {
-    try {
-      process.kill(s, 'SIGTERM');
-      console.log(`  ${c.yellow}!${c.reset}  ${'stray daemon'.padEnd(16)}${c.dim}sent SIGTERM to pid ${s} (not in the pid file)${c.reset}`);
-    } catch (e) {
-      console.log(`  ${c.red}✗${c.reset}  ${'stray stop failed'.padEnd(16)}${c.dim}pid ${s}: ${e.message}${c.reset}`);
-    }
+  const found = findDaemonPids().filter((p) => p !== pid);
+  if (!found.length) return 0;
+  // The pid-file daemon is stopDaemonAndWait's job; here only the strays.
+  const r = signalDaemons({ strays: found });
+  for (const s of r.strays) {
+    console.log(`  ${c.yellow}!${c.reset}  ${'stray daemon'.padEnd(16)}${c.dim}sent SIGTERM to pid ${s} (not in the pid file)${c.reset}`);
   }
-  const deadline = Date.now() + 3000;
-  while (strays.some(isAlive) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
-  for (const s of strays.filter(isAlive)) {
-    try {
-      process.kill(s, 'SIGKILL');
-      console.log(`  ${c.yellow}!${c.reset}  ${'stray daemon'.padEnd(16)}${c.dim}ignored SIGTERM — sent SIGKILL to pid ${s}${c.reset}`);
-    } catch { /* exited at the last moment */ }
+  for (const e of r.errors) {
+    console.log(`  ${c.red}✗${c.reset}  ${'stray stop failed'.padEnd(16)}${c.dim}pid ${e.pid}: ${e.message}${c.reset}`);
   }
-  return strays.length;
+  const { killedStrays } = await waitForDaemonsToExit({ strays: r.strays, daemonPid: () => 0 });
+  for (const s of killedStrays) {
+    console.log(`  ${c.yellow}!${c.reset}  ${'stray daemon'.padEnd(16)}${c.dim}ignored SIGTERM — sent SIGKILL to pid ${s}${c.reset}`);
+  }
+  return found.length;
 }
 
 // `stop` is durable: the marker keeps the SessionStart hook, the login
