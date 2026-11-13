@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { DEFAULT_CONFIG } from '../src/default-config.js';
 import { mergeConfig } from '../src/config.js';
 
-const { saveSettings, validateConfig, writeAllowed, STATUSES } = await import('../src/server/settings.js');
+const { saveSettings, validateConfig, writeAllowed, STATUSES, stopDaemons } = await import('../src/server/settings.js');
 
 const clone = (v) => structuredClone(v);
 const tmpConfig = (content) => {
@@ -103,4 +103,65 @@ test('writeAllowed: only same-origin JSON requests may change settings', () => {
   assert.equal(writeAllowed({ host, origin: `http://${host}`, 'content-type': 'text/plain' }), false);
   assert.equal(writeAllowed({ host, origin: `http://${host}`, 'content-type': 'application/x-www-form-urlencoded' }), false);
   assert.equal(writeAllowed({ host, origin: `http://${host}` }), false);
+});
+
+// ── fork: the page's Stop must not leave stray daemons running ──────────
+// Fakes only, stopPidDaemon included: the real helpers would find (and stop)
+// the machine's own running daemon.
+test('stopDaemons: stops the pid-file daemon AND strays the pid file does not know', async () => {
+  const calls = {};
+  const ok = await stopDaemons({
+    pidAlive: () => 7,
+    stopPidDaemon: async () => { calls.pidDaemon = true; return true; },
+    find: () => [7, 42],                       // the scan sees the daemon itself too
+    signalAll: ({ pid, strays }) => { calls.signal = { pid, strays }; return { signalled: false, strays, errors: [] }; },
+    waitAll: async ({ strays, daemonPid }) => { calls.wait = { strays, daemonPid: daemonPid() }; return { killedDaemon: null, killedStrays: [] }; },
+  });
+  assert.equal(ok, true);
+  assert.equal(calls.pidDaemon, true, 'the pid-file daemon goes through stopDaemonAndWait');
+  assert.deepEqual(calls.signal, { pid: undefined, strays: [42] }, 'only the stray is signalled here');
+  assert.deepEqual(calls.wait, { strays: [42], daemonPid: 0 }, 'waits on (and would SIGKILL) the stray only');
+});
+
+test('stopDaemons: a stray alone (no pid-file daemon) is still stopped', async () => {
+  const calls = {};
+  const ok = await stopDaemons({
+    pidAlive: () => 0,
+    stopPidDaemon: async () => true,           // nothing running → true
+    find: () => [42],
+    signalAll: ({ strays }) => { calls.signal = strays; return { signalled: false, strays, errors: [] }; },
+    waitAll: async ({ strays }) => { calls.wait = strays; return { killedDaemon: null, killedStrays: [] }; },
+  });
+  assert.equal(ok, true);
+  assert.deepEqual(calls.signal, [42]);
+  assert.deepEqual(calls.wait, [42]);
+});
+
+test('stopDaemons: no strays → nothing signalled; the result is the pid-file stop', async () => {
+  let signalled = false;
+  const stopFailed = await stopDaemons({
+    pidAlive: () => 7, stopPidDaemon: async () => false,
+    find: () => [7], signalAll: () => { signalled = true; return { strays: [] }; },
+  });
+  assert.equal(signalled, false);
+  assert.equal(stopFailed, false, 'a wedged pid-file daemon is reported');
+});
+
+// ── fork: saving from the page keeps settings the page doesn't show ─────
+test('saveSettings keeps the fork\'s privacy keys (projectName, hotspot) when other settings change', () => {
+  const raw = {
+    clientId: '1506443909406920948',
+    privacy: { patterns: ['*'], mode: 'name-only', projectName: 'Project', autoDetectGithubPrivate: false, hotspot: false },
+  };
+  const path = tmpConfig(raw);
+  const base = view(raw);
+  const edited = clone(base);
+  edited.rotationIntervalMs = 20000;                // an unrelated edit
+  edited.privacy.mode = 'hidden';                   // and one inside the same privacy block
+  assert.equal(saveSettings({ base, edited }, { path }).ok, true);
+  const saved = JSON.parse(readFileSync(path, 'utf8'));
+  assert.equal(saved.privacy.hotspot, false, 'privacy.hotspot survives');
+  assert.equal(saved.privacy.projectName, 'Project', 'privacy.projectName survives');
+  assert.equal(saved.privacy.mode, 'hidden');
+  assert.deepEqual(saved.privacy.patterns, ['*']);
 });

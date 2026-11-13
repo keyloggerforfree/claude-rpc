@@ -21,7 +21,7 @@ import { DEFAULT_CONFIG } from '../default-config.js';
 import { loadConfig, mergeConfig } from '../config.js';
 import { applyEdits } from '../config-edit.js';
 import { writeFileAtomic } from '../atomic-rename.js';
-import { daemonAlive, spawnDaemonDetached, stopDaemonAndWait, markStopped, clearStopped, isStopped } from '../ensure-daemon.js';
+import { daemonAlive, spawnDaemonDetached, stopDaemonAndWait, markStopped, clearStopped, isStopped, findDaemonPids, signalDaemons, waitForDaemonsToExit } from '../ensure-daemon.js';
 import { ipcStateFromLog, bridgeFromLog, classifyClientId } from '../doctor.js';
 import { readActiveState } from '../state.js';
 import { findLiveSessions, readAggregate } from '../scanner.js';
@@ -163,10 +163,34 @@ async function waitDaemon(want, timeoutMs) {
 }
 
 // Same semantics as `claude-rpc stop`: durable (the marker keeps the hook and
-// login autostart from bringing it back) and confirmed (hard-kill if wedged).
+// login autostart from bringing it back) and confirmed (hard-kill if wedged) —
+// and, like `claude-rpc stop` in this fork, it also stops stray daemons the
+// pid file doesn't know about (another install path, or a different TMPDIR):
+// a stray running pre-1.9 code never reads the stopped marker and keeps
+// pushing presence, possibly unprivatized, after the page says "stopped".
+// The pid-file daemon goes through upstream's stopDaemonAndWait; strays get
+// SIGTERM, ~3s, then SIGKILL (ensure-daemon.signalDaemons /
+// waitForDaemonsToExit, shared with the CLI), in parallel.
+// Everything is injectable so tests never touch real processes — the real
+// helpers would find, and stop, the developer's own running daemon.
+export async function stopDaemons({
+  pidAlive = daemonAlive, stopPidDaemon = stopDaemonAndWait,
+  find = findDaemonPids, signalAll = signalDaemons, waitAll = waitForDaemonsToExit,
+} = {}) {
+  const pid = pidAlive();
+  const strays = find().filter((p) => p !== pid);
+  const stopStrays = async () => {
+    if (!strays.length) return;
+    const { strays: signalled } = signalAll({ strays });
+    await waitAll({ strays: signalled, daemonPid: () => 0 });
+  };
+  const [ok] = await Promise.all([stopPidDaemon(), stopStrays()]);
+  return ok;
+}
+
 async function stop({ mark = true } = {}) {
   if (mark) markStopped();
-  return stopDaemonAndWait();
+  return stopDaemons();
 }
 
 async function start() {
