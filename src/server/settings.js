@@ -21,7 +21,7 @@ import { DEFAULT_CONFIG } from '../default-config.js';
 import { loadConfig, mergeConfig } from '../config.js';
 import { applyEdits } from '../config-edit.js';
 import { writeFileAtomic } from '../atomic-rename.js';
-import { daemonAlive, spawnDaemonDetached } from '../ensure-daemon.js';
+import { daemonAlive, spawnDaemonDetached, findDaemonPids, signalDaemons, waitForDaemonsToExit } from '../ensure-daemon.js';
 import { ipcStateFromLog, bridgeFromLog, classifyClientId } from '../doctor.js';
 import { readActiveState } from '../state.js';
 import { findLiveSessions, readAggregate } from '../scanner.js';
@@ -162,19 +162,27 @@ async function waitDaemon(want, timeoutMs) {
   }
 }
 
-function signal(pid, sig) {
-  try { process.kill(pid, sig); return true; } catch { return false; }
+// Stop the daemon — and, like `claude-rpc stop`, any stray daemon the pid file
+// doesn't know about (another install path, or one started under a different
+// TMPDIR): a stray keeps pushing presence, possibly unprivatized, after the
+// page says "stopped". SIGTERM, ~3s to exit, then SIGKILL whatever is wedged
+// (ensure-daemon.signalDaemons / waitForDaemonsToExit, shared with the CLI).
+// The helpers are injectable so tests never scan the real process table —
+// that would find, and stop, the developer's own running daemon.
+export async function stopDaemons({
+  pidAlive = daemonAlive, find = findDaemonPids, signalAll = signalDaemons, waitAll = waitForDaemonsToExit,
+} = {}) {
+  const pid = pidAlive();
+  const strays = find().filter((p) => p !== pid);
+  if (!pid && !strays.length) return true;
+  const { strays: signalled } = signalAll({ pid, strays });
+  await waitAll({ strays: signalled, daemonPid: pidAlive });
+  return !pidAlive();
 }
 
 async function stop() {
-  const pid = daemonAlive();
-  if (!pid) return true;
-  signal(pid, 'SIGTERM');
-  if (await waitDaemon(false, 3000)) return true;
-  // Wedged: it ignored SIGTERM for 3s. Don't leave the user with a daemon
-  // they asked to stop.
-  signal(pid, 'SIGKILL');
-  return waitDaemon(false, 1500);
+  if (!(await stopDaemons())) return waitDaemon(false, 1500);
+  return true;
 }
 
 async function start() {
